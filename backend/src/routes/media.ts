@@ -81,6 +81,45 @@ export const createMediaRouter = (db: DatabaseService) => {
     }
   });
 
+  // Get seasons for a TV show
+  router.get('/:ratingKey/seasons', authMiddleware, async (req: AuthRequest, res) => {
+    try {
+      const { ratingKey } = req.params;
+      const userToken = req.user?.plexToken || db.getSetting('plex_token') || undefined;
+      const seasons = await plexService.getSeasons(ratingKey, userToken);
+      return res.json({ seasons });
+    } catch (error) {
+      logger.error('Failed to get seasons', { error });
+      return res.status(500).json({ error: 'Failed to get seasons' });
+    }
+  });
+
+  // Get episodes for a season
+  router.get('/:ratingKey/episodes', authMiddleware, async (req: AuthRequest, res) => {
+    try {
+      const { ratingKey } = req.params;
+      const userToken = req.user?.plexToken || db.getSetting('plex_token') || undefined;
+      const episodes = await plexService.getEpisodes(ratingKey, userToken);
+      return res.json({ episodes });
+    } catch (error) {
+      logger.error('Failed to get episodes', { error });
+      return res.status(500).json({ error: 'Failed to get episodes' });
+    }
+  });
+
+  // Get tracks for an album
+  router.get('/:ratingKey/tracks', authMiddleware, async (req: AuthRequest, res) => {
+    try {
+      const { ratingKey } = req.params;
+      const userToken = req.user?.plexToken || db.getSetting('plex_token') || undefined;
+      const tracks = await plexService.getTracks(ratingKey, userToken);
+      return res.json({ tracks });
+    } catch (error) {
+      logger.error('Failed to get tracks', { error });
+      return res.status(500).json({ error: 'Failed to get tracks' });
+    }
+  });
+
   // Download media
   router.get('/:ratingKey/download', authMiddleware, async (req: AuthRequest, res) => {
     try {

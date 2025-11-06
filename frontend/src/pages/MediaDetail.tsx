@@ -8,6 +8,10 @@ import { MediaItem } from '../types';
 export const MediaDetail: React.FC = () => {
   const { ratingKey } = useParams<{ ratingKey: string }>();
   const [media, setMedia] = useState<MediaItem | null>(null);
+  const [seasons, setSeasons] = useState<MediaItem[]>([]);
+  const [episodesBySeason, setEpisodesBySeason] = useState<Record<string, MediaItem[]>>({});
+  const [expandedSeasons, setExpandedSeasons] = useState<Record<string, boolean>>({});
+  const [tracks, setTracks] = useState<MediaItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -26,6 +30,18 @@ export const MediaDetail: React.FC = () => {
     try {
       const metadata = await api.getMediaMetadata(ratingKey);
       setMedia(metadata);
+
+      // If it's a TV show, load seasons
+      if (metadata.type === 'show') {
+        const seasonsData = await api.getSeasons(ratingKey);
+        setSeasons(seasonsData);
+      }
+
+      // If it's an album (audiobook), load tracks
+      if (metadata.type === 'album') {
+        const tracksData = await api.getTracks(ratingKey);
+        setTracks(tracksData);
+      }
     } catch (err: any) {
       setError(err.response?.data?.error || 'Failed to load media details');
     } finally {
@@ -33,16 +49,56 @@ export const MediaDetail: React.FC = () => {
     }
   };
 
-  const handleDownload = (partKey: string, filename: string) => {
+  const toggleSeason = async (seasonRatingKey: string) => {
+    setExpandedSeasons((prev) => ({
+      ...prev,
+      [seasonRatingKey]: !prev[seasonRatingKey],
+    }));
+
+    // Load episodes if not already loaded
+    if (!episodesBySeason[seasonRatingKey]) {
+      try {
+        const episodes = await api.getEpisodes(seasonRatingKey);
+        setEpisodesBySeason((prev) => ({
+          ...prev,
+          [seasonRatingKey]: episodes,
+        }));
+      } catch (err) {
+        console.error('Failed to load episodes:', err);
+      }
+    }
+  };
+
+  const handleDownload = async (partKey: string, filename: string) => {
     if (!ratingKey) return;
 
-    const downloadUrl = api.getDownloadUrl(ratingKey, partKey);
-    const link = document.createElement('a');
-    link.href = downloadUrl;
-    link.download = filename;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    try {
+      const downloadUrl = api.getDownloadUrl(ratingKey, partKey);
+      const token = localStorage.getItem('token');
+
+      const response = await fetch(downloadUrl, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error('Download failed');
+      }
+
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error('Download failed:', error);
+      alert('Download failed. Please try again.');
+    }
   };
 
   const formatFileSize = (bytes: number): string => {
@@ -154,39 +210,171 @@ export const MediaDetail: React.FC = () => {
                   {/* Download Options */}
                   <div className="mt-8">
                     <h2 className="text-2xl font-semibold mb-4">Download</h2>
-                    {media.Media && media.Media.length > 0 ? (
-                      <div className="space-y-4">
-                        {media.Media.map((mediaPart, idx) => (
-                          <div key={idx} className="card p-4">
-                            <div className="flex items-center justify-between">
-                              <div>
-                                <div className="font-medium mb-1">
-                                  {mediaPart.videoResolution} - {mediaPart.videoCodec.toUpperCase()}
+
+                    {media.type === 'album' ? (
+                      // Album (Audiobook) - Show tracks
+                      tracks.length > 0 ? (
+                        <div className="space-y-2">
+                          {tracks.map((track, index) => (
+                            <div
+                              key={track.ratingKey}
+                              className="card p-3 flex items-center justify-between"
+                            >
+                              <div className="flex items-center space-x-3">
+                                <div className="text-gray-400 font-mono text-sm w-8">
+                                  {index + 1}.
                                 </div>
-                                <div className="text-sm text-gray-400">
-                                  {mediaPart.width}x{mediaPart.height} • {mediaPart.container.toUpperCase()}
-                                  {mediaPart.Part[0]?.size && (
-                                    <> • {formatFileSize(mediaPart.Part[0].size)}</>
-                                  )}
+                                <div>
+                                  <div className="font-medium">{track.title}</div>
+                                  <div className="text-sm text-gray-400">
+                                    {track.duration && formatDuration(track.duration)}
+                                    {track.Media?.[0]?.Part?.[0]?.size && (
+                                      <> • {formatFileSize(track.Media[0].Part[0].size)}</>
+                                    )}
+                                  </div>
                                 </div>
                               </div>
-                              {mediaPart.Part.map((part, partIdx) => (
+                              {track.Media?.[0]?.Part?.[0] && (
                                 <button
-                                  key={partIdx}
                                   onClick={() =>
-                                    handleDownload(part.key, part.file.split('/').pop() || 'download')
+                                    handleDownload(
+                                      track.Media![0].Part[0].key,
+                                      track.Media![0].Part[0].file.split('/').pop() || 'download'
+                                    )
                                   }
                                   className="btn-primary"
                                 >
                                   Download
                                 </button>
-                              ))}
+                              )}
                             </div>
-                          </div>
-                        ))}
-                      </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="text-gray-400">No tracks available</div>
+                      )
+                    ) : media.type === 'show' ? (
+                      // TV Show - Show seasons and episodes
+                      seasons.length > 0 ? (
+                        <div className="space-y-4">
+                          {seasons.map((season) => (
+                            <div key={season.ratingKey} className="card">
+                              <button
+                                onClick={() => toggleSeason(season.ratingKey)}
+                                className="w-full p-4 flex items-center justify-between hover:bg-dark-200 transition-colors"
+                              >
+                                <div className="flex items-center space-x-4">
+                                  {season.thumb && (
+                                    <img
+                                      src={api.getThumbnailUrl(season.ratingKey, season.thumb)}
+                                      alt={season.title}
+                                      className="w-16 h-24 object-cover rounded"
+                                    />
+                                  )}
+                                  <div className="text-left">
+                                    <div className="font-medium text-lg">{season.title}</div>
+                                    {season.summary && (
+                                      <div className="text-sm text-gray-400 line-clamp-2">
+                                        {season.summary}
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
+                                <div className="flex items-center space-x-2">
+                                  <span className="text-gray-400">
+                                    {expandedSeasons[season.ratingKey] ? '▼' : '▶'}
+                                  </span>
+                                </div>
+                              </button>
+
+                              {expandedSeasons[season.ratingKey] && (
+                                <div className="border-t border-dark-50 p-4 space-y-2">
+                                  {episodesBySeason[season.ratingKey] ? (
+                                    episodesBySeason[season.ratingKey].map((episode) => (
+                                      <div
+                                        key={episode.ratingKey}
+                                        className="card p-3 flex items-center justify-between"
+                                      >
+                                        <div className="flex items-center space-x-3">
+                                          {episode.thumb && (
+                                            <img
+                                              src={api.getThumbnailUrl(episode.ratingKey, episode.thumb)}
+                                              alt={episode.title}
+                                              className="w-24 h-16 object-cover rounded"
+                                            />
+                                          )}
+                                          <div>
+                                            <div className="font-medium">{episode.title}</div>
+                                            <div className="text-sm text-gray-400">
+                                              {episode.duration && formatDuration(episode.duration)}
+                                              {episode.Media?.[0]?.Part?.[0]?.size && (
+                                                <> • {formatFileSize(episode.Media[0].Part[0].size)}</>
+                                              )}
+                                            </div>
+                                          </div>
+                                        </div>
+                                        {episode.Media?.[0]?.Part?.[0] && (
+                                          <button
+                                            onClick={() =>
+                                              handleDownload(
+                                                episode.Media![0].Part[0].key,
+                                                episode.Media![0].Part[0].file.split('/').pop() || 'download'
+                                              )
+                                            }
+                                            className="btn-primary"
+                                          >
+                                            Download
+                                          </button>
+                                        )}
+                                      </div>
+                                    ))
+                                  ) : (
+                                    <div className="text-center text-gray-400 py-4">Loading episodes...</div>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="text-gray-400">No seasons available</div>
+                      )
                     ) : (
-                      <div className="text-gray-400">No download options available</div>
+                      // Movie or other media type - Show direct download
+                      media.Media && media.Media.length > 0 ? (
+                        <div className="space-y-4">
+                          {media.Media.map((mediaPart, idx) => (
+                            <div key={idx} className="card p-4">
+                              <div className="flex items-center justify-between">
+                                <div>
+                                  <div className="font-medium mb-1">
+                                    {mediaPart.videoResolution} - {mediaPart.videoCodec.toUpperCase()}
+                                  </div>
+                                  <div className="text-sm text-gray-400">
+                                    {mediaPart.width}x{mediaPart.height} • {mediaPart.container.toUpperCase()}
+                                    {mediaPart.Part[0]?.size && (
+                                      <> • {formatFileSize(mediaPart.Part[0].size)}</>
+                                    )}
+                                  </div>
+                                </div>
+                                {mediaPart.Part.map((part, partIdx) => (
+                                  <button
+                                    key={partIdx}
+                                    onClick={() =>
+                                      handleDownload(part.key, part.file.split('/').pop() || 'download')
+                                    }
+                                    className="btn-primary"
+                                  >
+                                    Download
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="text-gray-400">No download options available</div>
+                      )
                     )}
                   </div>
                 </div>

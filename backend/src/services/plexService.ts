@@ -225,8 +225,22 @@ export class PlexService {
       });
 
       if (response.data.authToken) {
-        // Plex API can return username, title, or friendly_name
-        const username = response.data.username || response.data.title || response.data.friendlyName || `plexuser_${response.data.id}`;
+        // Try to get more detailed user info from the user endpoint
+        let username = response.data.username || response.data.title || response.data.friendlyName;
+
+        try {
+          const userInfo = await this.getUserInfo(response.data.authToken);
+          // Plex user API can return friendly_name, username, or title
+          username = userInfo.friendlyName || userInfo.friendly_name || userInfo.username || userInfo.title || username;
+          logger.info('Fetched detailed user info', { username, userInfo });
+        } catch (error) {
+          logger.warn('Could not fetch detailed user info, using PIN data', { error });
+        }
+
+        // Fallback to user ID if no friendly name available
+        if (!username) {
+          username = `plexuser_${response.data.id}`;
+        }
 
         return {
           authToken: response.data.authToken,
@@ -317,7 +331,7 @@ export class PlexService {
     }
   }
 
-  async getLibraryContent(libraryKey: string, userToken?: string): Promise<PlexMedia[]> {
+  async getLibraryContent(libraryKey: string, userToken?: string, viewType?: string): Promise<PlexMedia[]> {
     if (!this.client && !this.plexUrl) {
       throw new Error('Plex client not initialized');
     }
@@ -347,7 +361,14 @@ export class PlexService {
         throw new Error('Plex client not available');
       }
 
-      const result = await client.query(`/library/sections/${libraryKey}/all`);
+      // For music/audiobook libraries (type: artist), fetch albums instead of artists
+      // This provides a better browsing experience
+      let endpoint = `/library/sections/${libraryKey}/all`;
+      if (viewType === 'albums') {
+        endpoint = `/library/sections/${libraryKey}/albums`;
+      }
+
+      const result = await client.query(endpoint);
 
       return result.MediaContainer.Metadata || [];
     } catch (error) {
@@ -392,6 +413,123 @@ export class PlexService {
     } catch (error) {
       logger.error('Failed to get media metadata', { error });
       throw new Error('Failed to get media metadata');
+    }
+  }
+
+  async getSeasons(showRatingKey: string, userToken?: string): Promise<PlexMedia[]> {
+    if (!this.client && !this.plexUrl) {
+      throw new Error('Plex client not initialized');
+    }
+
+    try {
+      let client: PlexAPI | null = null;
+      if (userToken) {
+        const connectionDetails = this.parseConnectionDetails(this.plexUrl || config.plex.url);
+        // plex-api library supports port and https options, but TypeScript definitions are incomplete
+        client = new PlexAPI({
+          hostname: connectionDetails.hostname,
+          port: connectionDetails.port,
+          https: connectionDetails.https,
+          token: userToken,
+          options: {
+            identifier: config.plex.clientIdentifier,
+            product: config.plex.product,
+            version: config.plex.version,
+            deviceName: config.plex.device,
+          },
+        } as any);
+      } else {
+        client = this.client;
+      }
+
+      if (!client) {
+        throw new Error('Plex client not available');
+      }
+
+      const result = await client.query(`/library/metadata/${showRatingKey}/children`);
+
+      return result.MediaContainer.Metadata || [];
+    } catch (error) {
+      logger.error('Failed to get seasons', { error });
+      throw new Error('Failed to get seasons');
+    }
+  }
+
+  async getEpisodes(seasonRatingKey: string, userToken?: string): Promise<PlexMedia[]> {
+    if (!this.client && !this.plexUrl) {
+      throw new Error('Plex client not initialized');
+    }
+
+    try {
+      let client: PlexAPI | null = null;
+      if (userToken) {
+        const connectionDetails = this.parseConnectionDetails(this.plexUrl || config.plex.url);
+        // plex-api library supports port and https options, but TypeScript definitions are incomplete
+        client = new PlexAPI({
+          hostname: connectionDetails.hostname,
+          port: connectionDetails.port,
+          https: connectionDetails.https,
+          token: userToken,
+          options: {
+            identifier: config.plex.clientIdentifier,
+            product: config.plex.product,
+            version: config.plex.version,
+            deviceName: config.plex.device,
+          },
+        } as any);
+      } else {
+        client = this.client;
+      }
+
+      if (!client) {
+        throw new Error('Plex client not available');
+      }
+
+      const result = await client.query(`/library/metadata/${seasonRatingKey}/children`);
+
+      return result.MediaContainer.Metadata || [];
+    } catch (error) {
+      logger.error('Failed to get episodes', { error });
+      throw new Error('Failed to get episodes');
+    }
+  }
+
+  async getTracks(albumRatingKey: string, userToken?: string): Promise<PlexMedia[]> {
+    if (!this.client && !this.plexUrl) {
+      throw new Error('Plex client not initialized');
+    }
+
+    try {
+      let client: PlexAPI | null = null;
+      if (userToken) {
+        const connectionDetails = this.parseConnectionDetails(this.plexUrl || config.plex.url);
+        // plex-api library supports port and https options, but TypeScript definitions are incomplete
+        client = new PlexAPI({
+          hostname: connectionDetails.hostname,
+          port: connectionDetails.port,
+          https: connectionDetails.https,
+          token: userToken,
+          options: {
+            identifier: config.plex.clientIdentifier,
+            product: config.plex.product,
+            version: config.plex.version,
+            deviceName: config.plex.device,
+          },
+        } as any);
+      } else {
+        client = this.client;
+      }
+
+      if (!client) {
+        throw new Error('Plex client not available');
+      }
+
+      const result = await client.query(`/library/metadata/${albumRatingKey}/children`);
+
+      return result.MediaContainer.Metadata || [];
+    } catch (error) {
+      logger.error('Failed to get tracks', { error });
+      throw new Error('Failed to get tracks');
     }
   }
 

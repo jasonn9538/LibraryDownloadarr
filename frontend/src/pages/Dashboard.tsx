@@ -5,16 +5,37 @@ import { Sidebar } from '../components/Sidebar';
 import { MediaGrid } from '../components/MediaGrid';
 import { api } from '../services/api';
 import { MediaItem } from '../types';
+import { useAuthStore } from '../stores/authStore';
 
 export const Dashboard: React.FC = () => {
   const [recentlyAdded, setRecentlyAdded] = useState<MediaItem[]>([]);
   const [stats, setStats] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(true);
   const navigate = useNavigate();
+  const { user } = useAuthStore();
 
   useEffect(() => {
-    loadDashboard();
-  }, []);
+    // Redirect non-admin users to the first library
+    if (user && !user.isAdmin) {
+      redirectToFirstLibrary();
+    } else {
+      loadDashboard();
+    }
+  }, [user]);
+
+  const redirectToFirstLibrary = async () => {
+    try {
+      const libraries = await api.getLibraries();
+      if (libraries.length > 0) {
+        navigate(`/library/${libraries[0].key}`, { replace: true });
+      } else {
+        setIsLoading(false);
+      }
+    } catch (error) {
+      console.error('Failed to load libraries', error);
+      setIsLoading(false);
+    }
+  };
 
   const loadDashboard = async () => {
     try {

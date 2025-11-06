@@ -8,6 +8,7 @@ import { Dashboard } from './pages/Dashboard';
 import { LibraryView } from './pages/LibraryView';
 import { MediaDetail } from './pages/MediaDetail';
 import { Settings } from './pages/Settings';
+import { SearchResults } from './pages/SearchResults';
 
 const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { token } = useAuthStore();
@@ -93,6 +94,14 @@ const App: React.FC = () => {
               element={
                 <ProtectedRoute>
                   <Settings />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/search"
+              element={
+                <ProtectedRoute>
+                  <SearchResults />
                 </ProtectedRoute>
               }
             />
