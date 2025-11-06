@@ -1,5 +1,6 @@
 import PlexAPI from 'plex-api';
 import axios from 'axios';
+import { parseStringPromise } from 'xml2js';
 import { logger } from '../utils/logger';
 import { config } from '../config';
 
@@ -275,43 +276,56 @@ export class PlexService {
 
   async getUserServers(userToken: string): Promise<any[]> {
     try {
-      // Use the resources endpoint - MUST use format=json param for JSON response
+      // Plex /api/resources endpoint returns XML only (no JSON option)
       const response = await axios.get('https://plex.tv/api/resources', {
         headers: {
           'X-Plex-Token': userToken,
-          'Accept': 'application/json',
         },
         params: {
           includeHttps: '1',
           includeRelay: '1',
-          format: 'json',  // Force JSON format (Plex API defaults to XML!)
         },
       });
 
-      logger.info('getUserServers response', {
-        isArray: Array.isArray(response.data),
-        dataType: typeof response.data,
-        hasMediaContainer: !!response.data?.MediaContainer,
-        dataKeys: response.data ? Object.keys(response.data).slice(0, 10) : []
+      // Parse XML to JSON
+      const parsed = await parseStringPromise(response.data, {
+        explicitArray: false,
+        mergeAttrs: true,
       });
 
-      // Handle both array response and MediaContainer wrapper
-      if (Array.isArray(response.data)) {
-        return response.data;
-      } else if (response.data?.MediaContainer?.Device) {
-        return Array.isArray(response.data.MediaContainer.Device)
-          ? response.data.MediaContainer.Device
-          : [response.data.MediaContainer.Device];
-      } else if (response.data?.Device) {
-        return Array.isArray(response.data.Device)
-          ? response.data.Device
-          : [response.data.Device];
+      logger.info('getUserServers parsed XML', {
+        hasMediaContainer: !!parsed?.MediaContainer,
+        hasDevice: !!parsed?.MediaContainer?.Device,
+        deviceType: typeof parsed?.MediaContainer?.Device
+      });
+
+      // Extract devices from parsed XML
+      if (parsed?.MediaContainer?.Device) {
+        const devices = Array.isArray(parsed.MediaContainer.Device)
+          ? parsed.MediaContainer.Device
+          : [parsed.MediaContainer.Device];
+
+        logger.info('Extracted devices from XML', {
+          deviceCount: devices.length,
+          firstDevice: devices[0] ? {
+            name: devices[0].name,
+            owned: devices[0].owned,
+            provides: devices[0].provides,
+            hasAccessToken: !!devices[0].accessToken,
+            hasConnection: !!devices[0].Connection
+          } : 'none'
+        });
+
+        return devices;
       }
 
-      logger.warn('Unexpected getUserServers response format', { data: response.data });
+      logger.warn('No devices found in XML response');
       return [];
     } catch (error) {
-      logger.error('Failed to get user servers', { error });
+      logger.error('Failed to get user servers', {
+        error,
+        message: error instanceof Error ? error.message : 'Unknown error'
+      });
       throw new Error('Failed to get user servers');
     }
   }
