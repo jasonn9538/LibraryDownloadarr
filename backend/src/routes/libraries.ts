@@ -19,10 +19,16 @@ export const createLibrariesRouter = (db: DatabaseService) => {
       logger.info('Getting libraries', {
         hasUserToken: !!req.user?.plexToken,
         hasAdminToken: !!db.getSetting('plex_token'),
-        plexUrl,
+        hasPlexUrl: !!plexUrl,
+        plexUrl: plexUrl || 'NOT SET',
         userId: req.user?.id,
         username: req.user?.username
       });
+
+      // Make sure PlexService has the current URL and token from database
+      if (plexUrl && userToken) {
+        plexService.setServerConnection(plexUrl, userToken);
+      }
 
       const libraries = await plexService.getLibraries(userToken);
       return res.json({ libraries });
@@ -31,7 +37,8 @@ export const createLibrariesRouter = (db: DatabaseService) => {
         error: error.message,
         stack: error.stack,
         hasUserToken: !!req.user?.plexToken,
-        hasAdminToken: !!db.getSetting('plex_token')
+        hasAdminToken: !!db.getSetting('plex_token'),
+        hasPlexUrl: !!db.getSetting('plex_url')
       });
       return res.status(500).json({ error: 'Failed to get libraries' });
     }

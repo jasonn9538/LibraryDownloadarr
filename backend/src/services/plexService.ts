@@ -192,16 +192,24 @@ export class PlexService {
         },
       });
 
+      logger.info('Plex PIN response', {
+        hasAuthToken: !!response.data.authToken,
+        userData: response.data,
+      });
+
       if (response.data.authToken) {
+        // Plex API can return username, title, or friendly_name
+        const username = response.data.username || response.data.title || response.data.friendlyName || `plexuser_${response.data.id}`;
+
         return {
           authToken: response.data.authToken,
           user: {
-            id: response.data.user?.id,
-            uuid: response.data.user?.uuid,
-            email: response.data.user?.email,
-            username: response.data.user?.username || response.data.user?.title,
-            title: response.data.user?.title,
-            thumb: response.data.user?.thumb,
+            id: response.data.id,
+            uuid: response.data.id?.toString(),
+            email: response.data.email || '',
+            username: username,
+            title: response.data.title || username,
+            thumb: response.data.thumb || '',
           },
         };
       }
@@ -231,7 +239,7 @@ export class PlexService {
   // Library operations
   async getLibraries(userToken?: string): Promise<PlexLibrary[]> {
     try {
-      // Determine which URL and token to use
+      // Get URL from: instance variable, environment, or database (via caller)
       const url = this.plexUrl || config.plex.url;
       const token = userToken || config.plex.token;
 
@@ -239,11 +247,13 @@ export class PlexService {
         hasUrl: !!url,
         hasToken: !!token,
         hasUserToken: !!userToken,
-        url
+        hasThisPlexUrl: !!this.plexUrl,
+        hasConfigUrl: !!config.plex.url,
+        url: url || 'MISSING'
       });
 
       if (!url || !token) {
-        throw new Error('Plex URL and token are required. Please configure in Settings.');
+        throw new Error(`Plex URL and token are required. Please configure in Settings. (url: ${!!url}, token: ${!!token})`);
       }
 
       // Always create a fresh client for reliability
