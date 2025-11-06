@@ -1,8 +1,18 @@
 import PlexAPI from 'plex-api';
 import axios from 'axios';
-import { parseStringPromise } from 'xml2js';
+import { parseString } from 'xml2js';
 import { logger } from '../utils/logger';
 import { config } from '../config';
+
+// Promisified wrapper for xml2js parseString with options support
+const parseStringAsync = (xml: string, options: any): Promise<any> => {
+  return new Promise((resolve, reject) => {
+    parseString(xml, options, (err, result) => {
+      if (err) reject(err);
+      else resolve(result);
+    });
+  });
+};
 
 export interface PlexLibrary {
   key: string;
@@ -288,7 +298,7 @@ export class PlexService {
       });
 
       // Parse XML to JSON
-      const parsed = await parseStringPromise(response.data, {
+      const parsed = await parseStringAsync(response.data, {
         explicitArray: false,
         mergeAttrs: true,
       });
