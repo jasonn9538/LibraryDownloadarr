@@ -48,7 +48,9 @@ export class DatabaseService {
     }
 
     this.db = new Database(dbPath);
-    this.db.pragma('journal_mode = WAL');
+    // Use DELETE mode instead of WAL for Docker compatibility
+    // WAL requires shared memory files that may not work with bind mounts
+    this.db.pragma('journal_mode = DELETE');
     this.initializeTables();
     logger.info(`Database initialized at ${dbPath}`);
   }
