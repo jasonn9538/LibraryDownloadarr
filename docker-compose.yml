@@ -9,8 +9,6 @@ services:
       - NODE_ENV=production
       - PORT=5069
       - BASE_URL=${BASE_URL:-http://localhost:5069}
-      - PLEX_URL=${PLEX_URL:-}
-      - PLEX_TOKEN=${PLEX_TOKEN:-}
       - JWT_SECRET=${JWT_SECRET:-change-this-secret-in-production}
       - SESSION_SECRET=${SESSION_SECRET:-change-this-session-secret-in-production}
       - DATABASE_PATH=/app/data/plexdownloadarr.db
