@@ -14,6 +14,8 @@ export const MediaDetail: React.FC = () => {
   const [tracks, setTracks] = useState<MediaItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
+  const [downloadingKeys, setDownloadingKeys] = useState<Set<string>>(new Set());
+  const [downloadStatus, setDownloadStatus] = useState<string>('');
 
   useEffect(() => {
     if (ratingKey) {
@@ -72,6 +74,10 @@ export const MediaDetail: React.FC = () => {
   const handleDownload = async (partKey: string, filename: string) => {
     if (!ratingKey) return;
 
+    // Track this download as in progress
+    setDownloadingKeys(prev => new Set(prev).add(partKey));
+    setDownloadStatus(`Downloading ${filename}...`);
+
     try {
       const downloadUrl = api.getDownloadUrl(ratingKey, partKey);
       const token = localStorage.getItem('token');
@@ -95,9 +101,20 @@ export const MediaDetail: React.FC = () => {
       link.click();
       document.body.removeChild(link);
       window.URL.revokeObjectURL(url);
+
+      setDownloadStatus(`✓ Downloaded ${filename}`);
+      setTimeout(() => setDownloadStatus(''), 3000);
     } catch (error) {
       console.error('Download failed:', error);
-      alert('Download failed. Please try again.');
+      setDownloadStatus('✗ Download failed. Please try again.');
+      setTimeout(() => setDownloadStatus(''), 5000);
+    } finally {
+      // Remove from downloading set
+      setDownloadingKeys(prev => {
+        const next = new Set(prev);
+        next.delete(partKey);
+        return next;
+      });
     }
   };
 
@@ -165,7 +182,14 @@ export const MediaDetail: React.FC = () => {
             </div>
           )}
 
-          <div className="p-8 -mt-48 relative z-10">
+          {/* Download Status Notification */}
+          {downloadStatus && (
+            <div className="fixed top-20 right-4 z-50 bg-dark-100 border border-primary-500 text-white px-6 py-3 rounded-lg shadow-xl">
+              {downloadStatus}
+            </div>
+          )}
+
+          <div className={`p-8 relative z-10 ${backdropUrl ? '-mt-48' : ''}`}>
             <div className="max-w-7xl mx-auto">
               <div className="flex flex-col md:flex-row gap-8">
                 {/* Poster */}
@@ -242,9 +266,10 @@ export const MediaDetail: React.FC = () => {
                                       track.Media![0].Part[0].file.split('/').pop() || 'download'
                                     )
                                   }
-                                  className="btn-primary"
+                                  disabled={downloadingKeys.has(track.Media![0].Part[0].key)}
+                                  className="btn-primary disabled:opacity-50 disabled:cursor-not-allowed"
                                 >
-                                  Download
+                                  {downloadingKeys.has(track.Media![0].Part[0].key) ? 'Downloading...' : 'Download'}
                                 </button>
                               )}
                             </div>
@@ -321,9 +346,10 @@ export const MediaDetail: React.FC = () => {
                                                 episode.Media![0].Part[0].file.split('/').pop() || 'download'
                                               )
                                             }
-                                            className="btn-primary"
+                                            disabled={downloadingKeys.has(episode.Media![0].Part[0].key)}
+                                            className="btn-primary disabled:opacity-50 disabled:cursor-not-allowed"
                                           >
-                                            Download
+                                            {downloadingKeys.has(episode.Media![0].Part[0].key) ? 'Downloading...' : 'Download'}
                                           </button>
                                         )}
                                       </div>
@@ -363,9 +389,10 @@ export const MediaDetail: React.FC = () => {
                                     onClick={() =>
                                       handleDownload(part.key, part.file.split('/').pop() || 'download')
                                     }
-                                    className="btn-primary"
+                                    disabled={downloadingKeys.has(part.key)}
+                                    className="btn-primary disabled:opacity-50 disabled:cursor-not-allowed"
                                   >
-                                    Download
+                                    {downloadingKeys.has(part.key) ? 'Downloading...' : 'Download'}
                                   </button>
                                 ))}
                               </div>
