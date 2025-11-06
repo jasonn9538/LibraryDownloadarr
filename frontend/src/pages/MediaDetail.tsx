@@ -4,10 +4,11 @@ import { Header } from '../components/Header';
 import { Sidebar } from '../components/Sidebar';
 import { api } from '../services/api';
 import { MediaItem } from '../types';
+import { useDownloads } from '../contexts/DownloadContext';
 
 export const MediaDetail: React.FC = () => {
   const { ratingKey } = useParams<{ ratingKey: string }>();
-  // TODO: integrate global download manager in future
+  const { startDownload, downloads } = useDownloads();
   const [media, setMedia] = useState<MediaItem | null>(null);
   const [seasons, setSeasons] = useState<MediaItem[]>([]);
   const [episodesBySeason, setEpisodesBySeason] = useState<Record<string, MediaItem[]>>({});
@@ -15,9 +16,6 @@ export const MediaDetail: React.FC = () => {
   const [tracks, setTracks] = useState<MediaItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
-  const [downloadingKeys, setDownloadingKeys] = useState<Set<string>>(new Set());
-  const [downloadStatus, setDownloadStatus] = useState<string>('');
-  const [downloadProgress, setDownloadProgress] = useState<Record<string, number>>({});
 
   useEffect(() => {
     if (ratingKey) {
@@ -80,93 +78,22 @@ export const MediaDetail: React.FC = () => {
     }
   };
 
+  // Helper function to check if a download is in progress for a given part
+  const isDownloading = (partKey: string): boolean => {
+    return downloads.some(d => d.partKey === partKey && d.status === 'downloading');
+  };
+
+  // Helper function to get download progress for a given part
+  const getDownloadProgress = (partKey: string): number => {
+    const download = downloads.find(d => d.partKey === partKey);
+    return download?.progress || 0;
+  };
+
   const handleDownload = async (partKey: string, filename: string) => {
-    if (!ratingKey) return;
+    if (!ratingKey || !media) return;
 
-    // Track this download as in progress
-    setDownloadingKeys(prev => new Set(prev).add(partKey));
-    setDownloadProgress(prev => ({ ...prev, [partKey]: 0 }));
-    setDownloadStatus(`Downloading ${filename}...`);
-
-    try {
-      const downloadUrl = api.getDownloadUrl(ratingKey, partKey);
-      const token = localStorage.getItem('token');
-
-      const response = await fetch(downloadUrl, {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-        },
-      });
-
-      if (!response.ok) {
-        throw new Error('Download failed');
-      }
-
-      // Get total size from Content-Length header
-      const contentLength = response.headers.get('content-length');
-      const total = contentLength ? parseInt(contentLength, 10) : 0;
-
-      // Read the response body with progress tracking
-      const reader = response.body?.getReader();
-      const chunks: Uint8Array[] = [];
-      let receivedLength = 0;
-
-      if (reader) {
-        while (true) {
-          const { done, value } = await reader.read();
-
-          if (done) break;
-
-          chunks.push(value);
-          receivedLength += value.length;
-
-          // Update progress
-          if (total > 0) {
-            const progress = Math.round((receivedLength / total) * 100);
-            setDownloadProgress(prev => ({ ...prev, [partKey]: progress }));
-            setDownloadStatus(`Downloading ${filename}... ${progress}%`);
-          }
-        }
-      }
-
-      // Combine chunks into single Uint8Array
-      const chunksAll = new Uint8Array(receivedLength);
-      let position = 0;
-      for (const chunk of chunks) {
-        chunksAll.set(chunk, position);
-        position += chunk.length;
-      }
-
-      // Create blob and download
-      const blob = new Blob([chunksAll]);
-      const url = window.URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = filename;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      window.URL.revokeObjectURL(url);
-
-      setDownloadStatus(`✓ Downloaded ${filename}`);
-      setTimeout(() => setDownloadStatus(''), 3000);
-    } catch (error) {
-      console.error('Download failed:', error);
-      setDownloadStatus('✗ Download failed. Please try again.');
-      setTimeout(() => setDownloadStatus(''), 5000);
-    } finally {
-      // Remove from downloading set and progress
-      setDownloadingKeys(prev => {
-        const next = new Set(prev);
-        next.delete(partKey);
-        return next;
-      });
-      setDownloadProgress(prev => {
-        const next = { ...prev };
-        delete next[partKey];
-        return next;
-      });
-    }
+    // Use the global download context
+    await startDownload(ratingKey, partKey, filename, media.title);
   };
 
   const formatFileSize = (bytes: number): string => {
@@ -230,13 +157,6 @@ export const MediaDetail: React.FC = () => {
               style={{ backgroundImage: `url(${backdropUrl})` }}
             >
               <div className="absolute inset-0 bg-gradient-to-t from-dark via-dark/60 to-transparent" />
-            </div>
-          )}
-
-          {/* Download Status Notification */}
-          {downloadStatus && (
-            <div className="fixed top-20 right-4 z-50 bg-dark-100 border border-primary-500 text-white px-6 py-3 rounded-lg shadow-xl">
-              {downloadStatus}
             </div>
           )}
 
@@ -318,18 +238,18 @@ export const MediaDetail: React.FC = () => {
                                         track.Media![0].Part[0].file.split('/').pop() || 'download'
                                       )
                                     }
-                                    disabled={downloadingKeys.has(track.Media![0].Part[0].key)}
+                                    disabled={isDownloading(track.Media![0].Part[0].key)}
                                     className="btn-primary disabled:opacity-50 disabled:cursor-not-allowed"
                                   >
-                                    {downloadingKeys.has(track.Media![0].Part[0].key)
-                                      ? `${downloadProgress[track.Media![0].Part[0].key] || 0}%`
+                                    {isDownloading(track.Media![0].Part[0].key)
+                                      ? `${getDownloadProgress(track.Media![0].Part[0].key)}%`
                                       : 'Download'}
                                   </button>
-                                  {downloadingKeys.has(track.Media![0].Part[0].key) && (
+                                  {isDownloading(track.Media![0].Part[0].key) && (
                                     <div className="w-32 h-2 bg-dark-200 rounded-full overflow-hidden">
                                       <div
                                         className="h-full bg-gradient-to-r from-primary-500 to-primary-400 transition-all duration-300 ease-out"
-                                        style={{ width: `${downloadProgress[track.Media![0].Part[0].key] || 0}%` }}
+                                        style={{ width: `${getDownloadProgress(track.Media![0].Part[0].key)}%` }}
                                       />
                                     </div>
                                   )}
@@ -377,18 +297,18 @@ export const MediaDetail: React.FC = () => {
                                         episode.Media![0].Part[0].file.split('/').pop() || 'download'
                                       )
                                     }
-                                    disabled={downloadingKeys.has(episode.Media![0].Part[0].key)}
+                                    disabled={isDownloading(episode.Media![0].Part[0].key)}
                                     className="btn-primary disabled:opacity-50 disabled:cursor-not-allowed"
                                   >
-                                    {downloadingKeys.has(episode.Media![0].Part[0].key)
-                                      ? `${downloadProgress[episode.Media![0].Part[0].key] || 0}%`
+                                    {isDownloading(episode.Media![0].Part[0].key)
+                                      ? `${getDownloadProgress(episode.Media![0].Part[0].key)}%`
                                       : 'Download'}
                                   </button>
-                                  {downloadingKeys.has(episode.Media![0].Part[0].key) && (
+                                  {isDownloading(episode.Media![0].Part[0].key) && (
                                     <div className="w-32 h-2 bg-dark-200 rounded-full overflow-hidden">
                                       <div
                                         className="h-full bg-gradient-to-r from-primary-500 to-primary-400 transition-all duration-300 ease-out"
-                                        style={{ width: `${downloadProgress[episode.Media![0].Part[0].key] || 0}%` }}
+                                        style={{ width: `${getDownloadProgress(episode.Media![0].Part[0].key)}%` }}
                                       />
                                     </div>
                                   )}
@@ -469,18 +389,18 @@ export const MediaDetail: React.FC = () => {
                                                   episode.Media![0].Part[0].file.split('/').pop() || 'download'
                                                 )
                                               }
-                                              disabled={downloadingKeys.has(episode.Media![0].Part[0].key)}
+                                              disabled={isDownloading(episode.Media![0].Part[0].key)}
                                               className="btn-primary disabled:opacity-50 disabled:cursor-not-allowed"
                                             >
-                                              {downloadingKeys.has(episode.Media![0].Part[0].key)
-                                                ? `${downloadProgress[episode.Media![0].Part[0].key] || 0}%`
+                                              {isDownloading(episode.Media![0].Part[0].key)
+                                                ? `${getDownloadProgress(episode.Media![0].Part[0].key)}%`
                                                 : 'Download'}
                                             </button>
-                                            {downloadingKeys.has(episode.Media![0].Part[0].key) && (
+                                            {isDownloading(episode.Media![0].Part[0].key) && (
                                               <div className="w-32 h-2 bg-dark-200 rounded-full overflow-hidden">
                                                 <div
                                                   className="h-full bg-gradient-to-r from-primary-500 to-primary-400 transition-all duration-300 ease-out"
-                                                  style={{ width: `${downloadProgress[episode.Media![0].Part[0].key] || 0}%` }}
+                                                  style={{ width: `${getDownloadProgress(episode.Media![0].Part[0].key)}%` }}
                                                 />
                                               </div>
                                             )}
@@ -523,18 +443,18 @@ export const MediaDetail: React.FC = () => {
                                       onClick={() =>
                                         handleDownload(part.key, part.file.split('/').pop() || 'download')
                                       }
-                                      disabled={downloadingKeys.has(part.key)}
+                                      disabled={isDownloading(part.key)}
                                       className="btn-primary disabled:opacity-50 disabled:cursor-not-allowed"
                                     >
-                                      {downloadingKeys.has(part.key)
-                                        ? `${downloadProgress[part.key] || 0}%`
+                                      {isDownloading(part.key)
+                                        ? `${getDownloadProgress(part.key)}%`
                                         : 'Download'}
                                     </button>
-                                    {downloadingKeys.has(part.key) && (
+                                    {isDownloading(part.key) && (
                                       <div className="w-32 h-2 bg-dark-200 rounded-full overflow-hidden">
                                         <div
                                           className="h-full bg-gradient-to-r from-primary-500 to-primary-400 transition-all duration-300 ease-out"
-                                          style={{ width: `${downloadProgress[part.key] || 0}%` }}
+                                          style={{ width: `${getDownloadProgress(part.key)}%` }}
                                         />
                                       </div>
                                     )}
