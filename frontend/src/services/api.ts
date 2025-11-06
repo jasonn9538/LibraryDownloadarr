@@ -50,9 +50,6 @@ class ApiClient {
   async setup(data: {
     username: string;
     password: string;
-    email: string;
-    plexUrl?: string;
-    plexToken?: string;
   }): Promise<AuthResponse> {
     const response = await this.client.post<AuthResponse>('/auth/setup', data);
     return response.data;
@@ -97,6 +94,13 @@ class ApiClient {
   }
 
   // Media endpoints
+  async getRecentlyAdded(limit: number = 20): Promise<MediaItem[]> {
+    const response = await this.client.get<{ media: MediaItem[] }>('/media/recently-added', {
+      params: { limit },
+    });
+    return response.data.media;
+  }
+
   async searchMedia(query: string): Promise<MediaItem[]> {
     const response = await this.client.get<{ results: MediaItem[] }>('/media/search', {
       params: { q: query },
@@ -109,6 +113,18 @@ class ApiClient {
     return response.data.metadata;
   }
 
+  async getDownloadHistory(limit: number = 50): Promise<any[]> {
+    const response = await this.client.get<{ history: any[] }>('/media/download-history', {
+      params: { limit },
+    });
+    return response.data.history;
+  }
+
+  async getDownloadStats(): Promise<any> {
+    const response = await this.client.get<{ stats: any }>('/media/download-stats');
+    return response.data.stats;
+  }
+
   getDownloadUrl(ratingKey: string, partKey: string): string {
     const token = localStorage.getItem('token');
     return `/api/media/${ratingKey}/download?partKey=${encodeURIComponent(
@@ -117,7 +133,8 @@ class ApiClient {
   }
 
   getThumbnailUrl(ratingKey: string, path: string): string {
-    return `/api/media/thumb/${ratingKey}?path=${encodeURIComponent(path)}`;
+    const token = localStorage.getItem('token');
+    return `/api/media/thumb/${ratingKey}?path=${encodeURIComponent(path)}&token=${token}`;
   }
 
   // Settings endpoints
@@ -130,8 +147,11 @@ class ApiClient {
     await this.client.put('/settings', settings);
   }
 
-  async testPlexConnection(): Promise<boolean> {
-    const response = await this.client.post<{ connected: boolean }>('/settings/test-connection');
+  async testPlexConnection(plexUrl?: string, plexToken?: string): Promise<boolean> {
+    const response = await this.client.post<{ connected: boolean }>('/settings/test-connection', {
+      plexUrl,
+      plexToken,
+    });
     return response.data.connected;
   }
 }

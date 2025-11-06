@@ -48,7 +48,9 @@ export class DatabaseService {
     }
 
     this.db = new Database(dbPath);
-    this.db.pragma('journal_mode = WAL');
+    // Use DELETE mode instead of WAL for Docker compatibility
+    // WAL requires shared memory files that may not work with bind mounts
+    this.db.pragma('journal_mode = DELETE');
     this.initializeTables();
     logger.info(`Database initialized at ${dbPath}`);
   }
@@ -81,15 +83,27 @@ export class DatabaseService {
       )
     `);
 
-    // Sessions table
+    // Migrate sessions table if it has the old FOREIGN KEY constraint
+    // Check if sessions table exists with FOREIGN KEY
+    const hasOldSchema = this.db.prepare(`
+      SELECT sql FROM sqlite_master
+      WHERE type='table' AND name='sessions' AND sql LIKE '%FOREIGN KEY%'
+    `).get();
+
+    if (hasOldSchema) {
+      logger.info('Migrating sessions table to remove FOREIGN KEY constraint');
+      // Drop old table and recreate without constraint
+      this.db.exec('DROP TABLE IF EXISTS sessions');
+    }
+
+    // Sessions table (no FOREIGN KEY since we have both admin_users and plex_users)
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS sessions (
         id TEXT PRIMARY KEY,
         user_id TEXT NOT NULL,
         token TEXT UNIQUE NOT NULL,
         expires_at INTEGER NOT NULL,
-        created_at INTEGER NOT NULL,
-        FOREIGN KEY (user_id) REFERENCES admin_users(id) ON DELETE CASCADE
+        created_at INTEGER NOT NULL
       )
     `);
 
@@ -252,6 +266,42 @@ export class DatabaseService {
       VALUES (?, ?, ?, ?, ?, ?)
     `);
     stmt.run(id, userId, mediaTitle, mediaKey, fileSize, Date.now());
+  }
+
+  getDownloadHistory(userId: string, limit: number = 50): any[] {
+    const stmt = this.db.prepare(`
+      SELECT * FROM download_logs
+      WHERE user_id = ?
+      ORDER BY downloaded_at DESC
+      LIMIT ?
+    `);
+    return stmt.all(userId, limit) as any[];
+  }
+
+  getAllDownloadHistory(limit: number = 100): any[] {
+    const stmt = this.db.prepare(`
+      SELECT dl.*,
+             COALESCE(au.username, pu.username) as username
+      FROM download_logs dl
+      LEFT JOIN admin_users au ON dl.user_id = au.id
+      LEFT JOIN plex_users pu ON dl.user_id = pu.id
+      ORDER BY dl.downloaded_at DESC
+      LIMIT ?
+    `);
+    return stmt.all(limit) as any[];
+  }
+
+  getDownloadStats(userId?: string): any {
+    let query = 'SELECT COUNT(*) as count, SUM(file_size) as total_size FROM download_logs';
+    const params: any[] = [];
+
+    if (userId) {
+      query += ' WHERE user_id = ?';
+      params.push(userId);
+    }
+
+    const stmt = this.db.prepare(query);
+    return stmt.get(...params);
   }
 
   // Utility methods

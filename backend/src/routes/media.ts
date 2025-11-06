@@ -9,6 +9,44 @@ export const createMediaRouter = (db: DatabaseService) => {
   const router = Router();
   const authMiddleware = createAuthMiddleware(db);
 
+  // Get recently added media
+  router.get('/recently-added', authMiddleware, async (req: AuthRequest, res) => {
+    try {
+      const limit = req.query.limit ? parseInt(req.query.limit as string) : 20;
+      // Use user's Plex token if available (for Plex OAuth users)
+      // Otherwise use server's admin token from settings (for admin users)
+      const userToken = req.user?.plexToken || db.getSetting('plex_token') || undefined;
+      const media = await plexService.getRecentlyAdded(userToken, limit);
+      return res.json({ media });
+    } catch (error) {
+      logger.error('Failed to get recently added', { error });
+      return res.status(500).json({ error: 'Failed to get recently added media' });
+    }
+  });
+
+  // Get download history
+  router.get('/download-history', authMiddleware, async (req: AuthRequest, res) => {
+    try {
+      const limit = req.query.limit ? parseInt(req.query.limit as string) : 50;
+      const history = db.getDownloadHistory(req.user!.id, limit);
+      return res.json({ history });
+    } catch (error) {
+      logger.error('Failed to get download history', { error });
+      return res.status(500).json({ error: 'Failed to get download history' });
+    }
+  });
+
+  // Get download stats
+  router.get('/download-stats', authMiddleware, async (req: AuthRequest, res) => {
+    try {
+      const stats = db.getDownloadStats(req.user!.id);
+      return res.json({ stats });
+    } catch (error) {
+      logger.error('Failed to get download stats', { error });
+      return res.status(500).json({ error: 'Failed to get download stats' });
+    }
+  });
+
   // Search media
   router.get('/search', authMiddleware, async (req: AuthRequest, res) => {
     try {
@@ -17,7 +55,9 @@ export const createMediaRouter = (db: DatabaseService) => {
         return res.status(400).json({ error: 'Search query is required' });
       }
 
-      const userToken = req.user?.plexToken;
+      // Use user's Plex token if available (for Plex OAuth users)
+      // Otherwise use server's admin token from settings (for admin users)
+      const userToken = req.user?.plexToken || db.getSetting('plex_token') || undefined;
       const results = await plexService.search(q, userToken);
       return res.json({ results });
     } catch (error) {
@@ -30,7 +70,9 @@ export const createMediaRouter = (db: DatabaseService) => {
   router.get('/:ratingKey', authMiddleware, async (req: AuthRequest, res) => {
     try {
       const { ratingKey } = req.params;
-      const userToken = req.user?.plexToken;
+      // Use user's Plex token if available (for Plex OAuth users)
+      // Otherwise use server's admin token from settings (for admin users)
+      const userToken = req.user?.plexToken || db.getSetting('plex_token') || undefined;
       const metadata = await plexService.getMediaMetadata(ratingKey, userToken);
       return res.json({ metadata });
     } catch (error) {
@@ -49,9 +91,11 @@ export const createMediaRouter = (db: DatabaseService) => {
         return res.status(400).json({ error: 'Part key is required' });
       }
 
-      const userToken = req.user?.plexToken;
+      // Use user's Plex token if available (for Plex OAuth users)
+      // Otherwise use server's admin token from settings (for admin users)
+      const userToken = req.user?.plexToken || db.getSetting('plex_token');
       if (!userToken) {
-        return res.status(401).json({ error: 'Plex token required' });
+        return res.status(401).json({ error: 'Plex token required - configure in settings' });
       }
 
       const metadata = await plexService.getMediaMetadata(ratingKey, userToken);
@@ -94,17 +138,50 @@ export const createMediaRouter = (db: DatabaseService) => {
   });
 
   // Get thumbnail/poster proxy
-  router.get('/thumb/:ratingKey', authMiddleware, async (req: AuthRequest, res) => {
+  // Support both Authorization header and query parameter token for image requests
+  router.get('/thumb/:ratingKey', async (req: AuthRequest, res) => {
     try {
-      const { path } = req.query;
+      const { path, token } = req.query;
 
       if (!path || typeof path !== 'string') {
         return res.status(400).json({ error: 'Thumbnail path is required' });
       }
 
-      const userToken = req.user?.plexToken;
+      // Check authentication from query parameter first (for <img> tags), then from header
+      let user = req.user;
+      if (!user && token && typeof token === 'string') {
+        const session = db.getSessionByToken(token);
+        if (session) {
+          const adminUser = db.getAdminUserById(session.userId);
+          if (adminUser) {
+            user = {
+              id: adminUser.id,
+              username: adminUser.username,
+              isAdmin: adminUser.isAdmin,
+            };
+          } else {
+            const plexUser = db.getPlexUserById(session.userId);
+            if (plexUser) {
+              user = {
+                id: plexUser.id,
+                username: plexUser.username,
+                isAdmin: plexUser.isAdmin,
+                plexToken: plexUser.plexToken,
+              };
+            }
+          }
+        }
+      }
+
+      if (!user) {
+        return res.status(401).json({ error: 'No token provided' });
+      }
+
+      // Use user's Plex token if available (for Plex OAuth users)
+      // Otherwise use server's admin token from settings (for admin users)
+      const userToken = user.plexToken || db.getSetting('plex_token');
       if (!userToken) {
-        return res.status(401).json({ error: 'Plex token required' });
+        return res.status(401).json({ error: 'Plex token required - configure in settings' });
       }
 
       const thumbUrl = plexService.getThumbnailUrl(path, userToken);

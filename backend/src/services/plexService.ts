@@ -66,6 +66,7 @@ export interface PlexAuthResponse {
 
 export class PlexService {
   private client: PlexAPI | null = null;
+  private plexUrl: string | null = null;
 
   constructor() {
     if (config.plex.url && config.plex.token) {
@@ -73,9 +74,55 @@ export class PlexService {
     }
   }
 
-  private initializeClient(hostname: string, token: string): void {
+  private parseConnectionDetails(urlOrHostname: string): { hostname: string; port: number; https: boolean } {
+    try {
+      // If it starts with http:// or https://, parse it
+      if (urlOrHostname.startsWith('http://') || urlOrHostname.startsWith('https://')) {
+        const url = new URL(urlOrHostname);
+        const port = url.port ? parseInt(url.port) : (url.protocol === 'https:' ? 443 : 32400);
+        const https = url.protocol === 'https:';
+
+        logger.info('Parsed connection details from URL', {
+          input: urlOrHostname,
+          hostname: url.hostname,
+          port: port,
+          https: https
+        });
+
+        return {
+          hostname: url.hostname,
+          port: port,
+          https: https
+        };
+      }
+
+      // Otherwise assume it's in host:port format or just hostname
+      if (urlOrHostname.includes(':')) {
+        const [hostname, portStr] = urlOrHostname.split(':');
+        const port = parseInt(portStr) || 32400;
+        logger.info('Parsed connection details from host:port', { hostname, port });
+        return { hostname, port, https: false };
+      }
+
+      // Just hostname
+      logger.info('Using hostname with default port', { hostname: urlOrHostname, port: 32400 });
+      return { hostname: urlOrHostname, port: 32400, https: false };
+    } catch (error) {
+      logger.warn('Failed to parse Plex URL, using defaults', { urlOrHostname, error });
+      return { hostname: urlOrHostname, port: 32400, https: false };
+    }
+  }
+
+  private initializeClient(urlOrHostname: string, token: string): void {
+    const connectionDetails = this.parseConnectionDetails(urlOrHostname);
+    const protocol = connectionDetails.https ? 'https' : 'http';
+    this.plexUrl = `${protocol}://${connectionDetails.hostname}:${connectionDetails.port}`;
+
+    // plex-api library supports port and https options, but TypeScript definitions are incomplete
     this.client = new PlexAPI({
-      hostname,
+      hostname: connectionDetails.hostname,
+      port: connectionDetails.port,
+      https: connectionDetails.https,
       token,
       options: {
         identifier: config.plex.clientIdentifier,
@@ -83,12 +130,16 @@ export class PlexService {
         version: config.plex.version,
         deviceName: config.plex.device,
       },
+    } as any);
+    logger.info('Plex client initialized', {
+      hostname: connectionDetails.hostname,
+      port: connectionDetails.port,
+      https: connectionDetails.https
     });
-    logger.info('Plex client initialized');
   }
 
-  setServerConnection(hostname: string, token: string): void {
-    this.initializeClient(hostname, token);
+  setServerConnection(urlOrHostname: string, token: string): void {
+    this.initializeClient(urlOrHostname, token);
   }
 
   async testConnection(): Promise<boolean> {
@@ -105,20 +156,46 @@ export class PlexService {
     }
   }
 
+  async testConnectionWithCredentials(urlOrHostname: string, token: string): Promise<boolean> {
+    try {
+      const connectionDetails = this.parseConnectionDetails(urlOrHostname);
+      // plex-api library supports port and https options, but TypeScript definitions are incomplete
+      const testClient = new PlexAPI({
+        hostname: connectionDetails.hostname,
+        port: connectionDetails.port,
+        https: connectionDetails.https,
+        token,
+        options: {
+          identifier: config.plex.clientIdentifier,
+          product: config.plex.product,
+          version: config.plex.version,
+          deviceName: config.plex.device,
+        },
+      } as any);
+
+      await testClient.query('/');
+      return true;
+    } catch (error) {
+      logger.error('Failed to test connection with provided credentials', { error });
+      return false;
+    }
+  }
+
   // OAuth PIN Flow
   async generatePin(): Promise<PlexPinResponse> {
     try {
       const response = await axios.post(
         'https://plex.tv/api/v2/pins',
-        {
-          strong: true,
-          'X-Plex-Product': config.plex.product,
-          'X-Plex-Client-Identifier': config.plex.clientIdentifier,
-        },
+        { strong: true },
         {
           headers: {
             'Content-Type': 'application/json',
             Accept: 'application/json',
+            'X-Plex-Product': config.plex.product,
+            'X-Plex-Client-Identifier': config.plex.clientIdentifier,
+          },
+          params: {
+            strong: true,
           },
         }
       );
@@ -142,16 +219,24 @@ export class PlexService {
         },
       });
 
+      logger.info('Plex PIN response', {
+        hasAuthToken: !!response.data.authToken,
+        userData: response.data,
+      });
+
       if (response.data.authToken) {
+        // Plex API can return username, title, or friendly_name
+        const username = response.data.username || response.data.title || response.data.friendlyName || `plexuser_${response.data.id}`;
+
         return {
           authToken: response.data.authToken,
           user: {
-            id: response.data.user?.id,
-            uuid: response.data.user?.uuid,
-            email: response.data.user?.email,
-            username: response.data.user?.username || response.data.user?.title,
-            title: response.data.user?.title,
-            thumb: response.data.user?.thumb,
+            id: response.data.id,
+            uuid: response.data.id?.toString(),
+            email: response.data.email || '',
+            username: username,
+            title: response.data.title || username,
+            thumb: response.data.thumb || '',
           },
         };
       }
@@ -180,23 +265,39 @@ export class PlexService {
 
   // Library operations
   async getLibraries(userToken?: string): Promise<PlexLibrary[]> {
-    if (!this.client) {
-      throw new Error('Plex client not initialized');
-    }
-
     try {
-      const client = userToken
-        ? new PlexAPI({
-            hostname: config.plex.url,
-            token: userToken,
-            options: {
-              identifier: config.plex.clientIdentifier,
-              product: config.plex.product,
-              version: config.plex.version,
-              deviceName: config.plex.device,
-            },
-          })
-        : this.client;
+      // Get URL from: instance variable, environment, or database (via caller)
+      const url = this.plexUrl || config.plex.url;
+      const token = userToken || config.plex.token;
+
+      logger.info('getLibraries called', {
+        hasUrl: !!url,
+        hasToken: !!token,
+        hasUserToken: !!userToken,
+        hasThisPlexUrl: !!this.plexUrl,
+        hasConfigUrl: !!config.plex.url,
+        url: url || 'MISSING'
+      });
+
+      if (!url || !token) {
+        throw new Error(`Plex URL and token are required. Please configure in Settings. (url: ${!!url}, token: ${!!token})`);
+      }
+
+      // Always create a fresh client for reliability
+      const connectionDetails = this.parseConnectionDetails(url);
+      // plex-api library supports port and https options, but TypeScript definitions are incomplete
+      const client = new PlexAPI({
+        hostname: connectionDetails.hostname,
+        port: connectionDetails.port,
+        https: connectionDetails.https,
+        token: token,
+        options: {
+          identifier: config.plex.clientIdentifier,
+          product: config.plex.product,
+          version: config.plex.version,
+          deviceName: config.plex.device,
+        },
+      } as any);
 
       const result = await client.query('/library/sections');
 
@@ -205,30 +306,46 @@ export class PlexService {
         title: dir.title,
         type: dir.type,
       }));
-    } catch (error) {
-      logger.error('Failed to get libraries', { error });
-      throw new Error('Failed to get libraries');
+    } catch (error: any) {
+      logger.error('Failed to get libraries', {
+        error: error.message,
+        stack: error.stack,
+        hasUrl: !!(this.plexUrl || config.plex.url),
+        hasToken: !!userToken
+      });
+      throw error;
     }
   }
 
   async getLibraryContent(libraryKey: string, userToken?: string): Promise<PlexMedia[]> {
-    if (!this.client) {
+    if (!this.client && !this.plexUrl) {
       throw new Error('Plex client not initialized');
     }
 
     try {
-      const client = userToken
-        ? new PlexAPI({
-            hostname: config.plex.url,
-            token: userToken,
-            options: {
-              identifier: config.plex.clientIdentifier,
-              product: config.plex.product,
-              version: config.plex.version,
-              deviceName: config.plex.device,
-            },
-          })
-        : this.client;
+      let client: PlexAPI | null = null;
+      if (userToken) {
+        const connectionDetails = this.parseConnectionDetails(this.plexUrl || config.plex.url);
+        // plex-api library supports port and https options, but TypeScript definitions are incomplete
+        client = new PlexAPI({
+          hostname: connectionDetails.hostname,
+          port: connectionDetails.port,
+          https: connectionDetails.https,
+          token: userToken,
+          options: {
+            identifier: config.plex.clientIdentifier,
+            product: config.plex.product,
+            version: config.plex.version,
+            deviceName: config.plex.device,
+          },
+        } as any);
+      } else {
+        client = this.client;
+      }
+
+      if (!client) {
+        throw new Error('Plex client not available');
+      }
 
       const result = await client.query(`/library/sections/${libraryKey}/all`);
 
@@ -240,23 +357,34 @@ export class PlexService {
   }
 
   async getMediaMetadata(ratingKey: string, userToken?: string): Promise<PlexMedia> {
-    if (!this.client) {
+    if (!this.client && !this.plexUrl) {
       throw new Error('Plex client not initialized');
     }
 
     try {
-      const client = userToken
-        ? new PlexAPI({
-            hostname: config.plex.url,
-            token: userToken,
-            options: {
-              identifier: config.plex.clientIdentifier,
-              product: config.plex.product,
-              version: config.plex.version,
-              deviceName: config.plex.device,
-            },
-          })
-        : this.client;
+      let client: PlexAPI | null = null;
+      if (userToken) {
+        const connectionDetails = this.parseConnectionDetails(this.plexUrl || config.plex.url);
+        // plex-api library supports port and https options, but TypeScript definitions are incomplete
+        client = new PlexAPI({
+          hostname: connectionDetails.hostname,
+          port: connectionDetails.port,
+          https: connectionDetails.https,
+          token: userToken,
+          options: {
+            identifier: config.plex.clientIdentifier,
+            product: config.plex.product,
+            version: config.plex.version,
+            deviceName: config.plex.device,
+          },
+        } as any);
+      } else {
+        client = this.client;
+      }
+
+      if (!client) {
+        throw new Error('Plex client not available');
+      }
 
       const result = await client.query(`/library/metadata/${ratingKey}`);
 
@@ -268,23 +396,34 @@ export class PlexService {
   }
 
   async search(query: string, userToken?: string): Promise<PlexMedia[]> {
-    if (!this.client) {
+    if (!this.client && !this.plexUrl) {
       throw new Error('Plex client not initialized');
     }
 
     try {
-      const client = userToken
-        ? new PlexAPI({
-            hostname: config.plex.url,
-            token: userToken,
-            options: {
-              identifier: config.plex.clientIdentifier,
-              product: config.plex.product,
-              version: config.plex.version,
-              deviceName: config.plex.device,
-            },
-          })
-        : this.client;
+      let client: PlexAPI | null = null;
+      if (userToken) {
+        const connectionDetails = this.parseConnectionDetails(this.plexUrl || config.plex.url);
+        // plex-api library supports port and https options, but TypeScript definitions are incomplete
+        client = new PlexAPI({
+          hostname: connectionDetails.hostname,
+          port: connectionDetails.port,
+          https: connectionDetails.https,
+          token: userToken,
+          options: {
+            identifier: config.plex.clientIdentifier,
+            product: config.plex.product,
+            version: config.plex.version,
+            deviceName: config.plex.device,
+          },
+        } as any);
+      } else {
+        client = this.client;
+      }
+
+      if (!client) {
+        throw new Error('Plex client not available');
+      }
 
       const result = await client.query('/search', { query });
 
@@ -295,20 +434,64 @@ export class PlexService {
     }
   }
 
+  async getRecentlyAdded(userToken?: string, limit: number = 20): Promise<PlexMedia[]> {
+    if (!this.client && !this.plexUrl) {
+      throw new Error('Plex client not initialized');
+    }
+
+    try {
+      let client: PlexAPI | null = null;
+      if (userToken) {
+        const connectionDetails = this.parseConnectionDetails(this.plexUrl || config.plex.url);
+        // plex-api library supports port and https options, but TypeScript definitions are incomplete
+        client = new PlexAPI({
+          hostname: connectionDetails.hostname,
+          port: connectionDetails.port,
+          https: connectionDetails.https,
+          token: userToken,
+          options: {
+            identifier: config.plex.clientIdentifier,
+            product: config.plex.product,
+            version: config.plex.version,
+            deviceName: config.plex.device,
+          },
+        } as any);
+      } else {
+        client = this.client;
+      }
+
+      if (!client) {
+        throw new Error('Plex client not available');
+      }
+
+      const result = await client.query('/library/recentlyAdded', {
+        'X-Plex-Container-Start': 0,
+        'X-Plex-Container-Size': limit,
+      });
+
+      return result.MediaContainer.Metadata || [];
+    } catch (error) {
+      logger.error('Failed to get recently added', { error });
+      throw new Error('Failed to get recently added');
+    }
+  }
+
   getDownloadUrl(partKey: string, token: string): string {
-    if (!config.plex.url) {
+    const baseUrl = this.plexUrl || config.plex.url;
+    if (!baseUrl) {
       throw new Error('Plex server URL not configured');
     }
 
-    return `${config.plex.url}${partKey}?download=1&X-Plex-Token=${token}`;
+    return `${baseUrl}${partKey}?download=1&X-Plex-Token=${token}`;
   }
 
   getThumbnailUrl(thumbPath: string, token: string): string {
-    if (!config.plex.url || !thumbPath) {
+    const baseUrl = this.plexUrl || config.plex.url;
+    if (!baseUrl || !thumbPath) {
       return '';
     }
 
-    return `${config.plex.url}${thumbPath}?X-Plex-Token=${token}`;
+    return `${baseUrl}${thumbPath}?X-Plex-Token=${token}`;
   }
 }
 
