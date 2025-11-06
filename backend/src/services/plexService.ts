@@ -36,6 +36,8 @@ export interface PlexMedia {
   originallyAvailableAt?: string;
   studio?: string;
   contentRating?: string;
+  librarySectionID?: string; // Library section this media belongs to
+  librarySectionTitle?: string; // Library name
   // Episode/Season specific fields
   grandparentTitle?: string; // Show name for episodes
   parentTitle?: string; // Season name for episodes

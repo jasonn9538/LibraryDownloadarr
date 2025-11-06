@@ -10,27 +10,33 @@ export const createMediaRouter = (db: DatabaseService) => {
   const authMiddleware = createAuthMiddleware(db);
 
   // Helper function to format media title for download logs
-  const formatMediaTitle = (metadata: any): string => {
+  const formatMediaTitle = (metadata: any, libraryTitle?: string): string => {
     const type = metadata.type;
+    const library = libraryTitle || 'Unknown Library';
 
     if (type === 'episode') {
-      // Format: "Show Name - S01E05 - Episode Title"
+      // Format: "{Library} - {ShowTitle} - {SeasonTitle} - E{##} - {EpisodeName}"
       const showName = metadata.grandparentTitle || 'Unknown Show';
-      const seasonNum = metadata.parentIndex ? String(metadata.parentIndex).padStart(2, '0') : '00';
+      const seasonTitle = metadata.parentTitle || 'Unknown Season';
       const episodeNum = metadata.index ? String(metadata.index).padStart(2, '0') : '00';
       const episodeTitle = metadata.title || 'Unknown Episode';
-      return `${showName} - S${seasonNum}E${episodeNum} - ${episodeTitle}`;
+      return `${library} - ${showName} - ${seasonTitle} - E${episodeNum} - ${episodeTitle}`;
     }
 
     if (type === 'track') {
-      // Format: "Album Name - Track Name"
+      // Format: "{Library} - {AlbumTitle} - {TrackName}"
       const albumName = metadata.parentTitle || 'Unknown Album';
       const trackTitle = metadata.title || 'Unknown Track';
-      return `${albumName} - ${trackTitle}`;
+      return `${library} - ${albumName} - ${trackTitle}`;
     }
 
-    // For movies, seasons, albums, or anything else, just use the title
-    return metadata.title || 'Unknown Media';
+    if (type === 'movie') {
+      // Format: "{Library} - {MovieTitle}"
+      return `${library} - ${metadata.title || 'Unknown Movie'}`;
+    }
+
+    // For seasons, albums, or anything else: "{Library} - {Title}"
+    return `${library} - ${metadata.title || 'Unknown Media'}`;
   };
 
   // Helper function to get user credentials with proper fallback
@@ -357,6 +363,24 @@ export const createMediaRouter = (db: DatabaseService) => {
       plexService.setServerConnection(serverUrl, token);
 
       const metadata = await plexService.getMediaMetadata(ratingKey, token);
+
+      // Get library information for better download title
+      let libraryTitle = metadata.librarySectionTitle || 'Unknown Library';
+      if (!libraryTitle || libraryTitle === 'Unknown Library') {
+        // Try to fetch library name from librarySectionID
+        if (metadata.librarySectionID) {
+          try {
+            const libraries = await plexService.getLibraries(token);
+            const library = libraries.find(l => l.key === metadata.librarySectionID);
+            if (library) {
+              libraryTitle = library.title;
+            }
+          } catch (err) {
+            logger.warn('Failed to fetch library info for download', { librarySectionID: metadata.librarySectionID });
+          }
+        }
+      }
+
       const downloadUrl = plexService.getDownloadUrl(partKey, token);
 
       // Stream the file through our server
@@ -371,8 +395,8 @@ export const createMediaRouter = (db: DatabaseService) => {
         ? parseInt(response.headers['content-length'], 10)
         : undefined;
 
-      // Log the download with formatted title and actual file size
-      const formattedTitle = formatMediaTitle(metadata);
+      // Log the download with formatted title including library name and actual file size
+      const formattedTitle = formatMediaTitle(metadata, libraryTitle);
       db.logDownload(
         req.user!.id,
         formattedTitle,
