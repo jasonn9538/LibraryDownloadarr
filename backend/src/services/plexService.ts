@@ -118,6 +118,7 @@ export class PlexService {
     const protocol = connectionDetails.https ? 'https' : 'http';
     this.plexUrl = `${protocol}://${connectionDetails.hostname}:${connectionDetails.port}`;
 
+    // plex-api library supports port and https options, but TypeScript definitions are incomplete
     this.client = new PlexAPI({
       hostname: connectionDetails.hostname,
       port: connectionDetails.port,
@@ -129,7 +130,7 @@ export class PlexService {
         version: config.plex.version,
         deviceName: config.plex.device,
       },
-    });
+    } as any);
     logger.info('Plex client initialized', {
       hostname: connectionDetails.hostname,
       port: connectionDetails.port,
@@ -158,6 +159,7 @@ export class PlexService {
   async testConnectionWithCredentials(urlOrHostname: string, token: string): Promise<boolean> {
     try {
       const connectionDetails = this.parseConnectionDetails(urlOrHostname);
+      // plex-api library supports port and https options, but TypeScript definitions are incomplete
       const testClient = new PlexAPI({
         hostname: connectionDetails.hostname,
         port: connectionDetails.port,
@@ -169,7 +171,7 @@ export class PlexService {
           version: config.plex.version,
           deviceName: config.plex.device,
         },
-      });
+      } as any);
 
       await testClient.query('/');
       return true;
@@ -283,6 +285,7 @@ export class PlexService {
 
       // Always create a fresh client for reliability
       const connectionDetails = this.parseConnectionDetails(url);
+      // plex-api library supports port and https options, but TypeScript definitions are incomplete
       const client = new PlexAPI({
         hostname: connectionDetails.hostname,
         port: connectionDetails.port,
@@ -294,7 +297,7 @@ export class PlexService {
           version: config.plex.version,
           deviceName: config.plex.device,
         },
-      });
+      } as any);
 
       const result = await client.query('/library/sections');
 
@@ -323,6 +326,7 @@ export class PlexService {
       let client: PlexAPI | null = null;
       if (userToken) {
         const connectionDetails = this.parseConnectionDetails(this.plexUrl || config.plex.url);
+        // plex-api library supports port and https options, but TypeScript definitions are incomplete
         client = new PlexAPI({
           hostname: connectionDetails.hostname,
           port: connectionDetails.port,
@@ -334,7 +338,7 @@ export class PlexService {
             version: config.plex.version,
             deviceName: config.plex.device,
           },
-        });
+        } as any);
       } else {
         client = this.client;
       }
@@ -361,6 +365,7 @@ export class PlexService {
       let client: PlexAPI | null = null;
       if (userToken) {
         const connectionDetails = this.parseConnectionDetails(this.plexUrl || config.plex.url);
+        // plex-api library supports port and https options, but TypeScript definitions are incomplete
         client = new PlexAPI({
           hostname: connectionDetails.hostname,
           port: connectionDetails.port,
@@ -372,7 +377,7 @@ export class PlexService {
             version: config.plex.version,
             deviceName: config.plex.device,
           },
-        });
+        } as any);
       } else {
         client = this.client;
       }
@@ -399,6 +404,7 @@ export class PlexService {
       let client: PlexAPI | null = null;
       if (userToken) {
         const connectionDetails = this.parseConnectionDetails(this.plexUrl || config.plex.url);
+        // plex-api library supports port and https options, but TypeScript definitions are incomplete
         client = new PlexAPI({
           hostname: connectionDetails.hostname,
           port: connectionDetails.port,
@@ -410,7 +416,7 @@ export class PlexService {
             version: config.plex.version,
             deviceName: config.plex.device,
           },
-        });
+        } as any);
       } else {
         client = this.client;
       }
@@ -437,6 +443,7 @@ export class PlexService {
       let client: PlexAPI | null = null;
       if (userToken) {
         const connectionDetails = this.parseConnectionDetails(this.plexUrl || config.plex.url);
+        // plex-api library supports port and https options, but TypeScript definitions are incomplete
         client = new PlexAPI({
           hostname: connectionDetails.hostname,
           port: connectionDetails.port,
@@ -448,7 +455,7 @@ export class PlexService {
             version: config.plex.version,
             deviceName: config.plex.device,
           },
-        });
+        } as any);
       } else {
         client = this.client;
       }
