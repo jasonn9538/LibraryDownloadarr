@@ -275,14 +275,15 @@ export class PlexService {
 
   async getUserServers(userToken: string): Promise<any[]> {
     try {
-      const response = await axios.get('https://plex.tv/api/v2/resources', {
+      // Use the resources endpoint (not v2) - this works for getting user's accessible servers
+      const response = await axios.get('https://plex.tv/api/resources', {
         headers: {
           'X-Plex-Token': userToken,
           Accept: 'application/json',
         },
         params: {
-          includeHttps: 1,
-          includeRelay: 1,
+          includeHttps: '1',
+          includeRelay: '1',
         },
       });
       return response.data;

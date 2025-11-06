@@ -11,22 +11,33 @@ export const createLibrariesRouter = (db: DatabaseService) => {
   // Get all libraries
   router.get('/', authMiddleware, async (req: AuthRequest, res) => {
     try {
-      // Use user's token and server URL if available, otherwise fall back to admin
+      // Use user's token and server URL if BOTH are available, otherwise fall back to admin
       const userToken = req.user?.plexToken;
       const userServerUrl = req.user?.serverUrl;
       const adminToken = db.getSetting('plex_token') || undefined;
       const adminUrl = db.getSetting('plex_url') || '';
 
-      // Determine which credentials to use
-      const token = userToken || adminToken;
-      const serverUrl = userServerUrl || adminUrl;
+      // Only use user credentials if we have BOTH token and URL
+      // Otherwise fall back to admin (don't mix user token with admin URL)
+      let token: string | undefined;
+      let serverUrl: string;
+
+      if (userToken && userServerUrl) {
+        // User has their own Plex connection
+        token = userToken;
+        serverUrl = userServerUrl;
+      } else {
+        // Fall back to admin credentials
+        token = adminToken;
+        serverUrl = adminUrl;
+      }
 
       logger.info('Getting libraries', {
         hasUserToken: !!userToken,
         hasUserServerUrl: !!userServerUrl,
         hasAdminToken: !!adminToken,
         hasAdminUrl: !!adminUrl,
-        usingUserCreds: !!userToken,
+        usingUserCreds: !!(userToken && userServerUrl),
         serverUrl: serverUrl || 'NOT SET',
         userId: req.user?.id,
         username: req.user?.username,
@@ -62,14 +73,22 @@ export const createLibrariesRouter = (db: DatabaseService) => {
       const { libraryKey } = req.params;
       const { viewType } = req.query;
 
-      // Use user's token and server URL if available, otherwise fall back to admin
+      // Use user's token and server URL if BOTH are available, otherwise fall back to admin
       const userToken = req.user?.plexToken;
       const userServerUrl = req.user?.serverUrl;
       const adminToken = db.getSetting('plex_token') || undefined;
       const adminUrl = db.getSetting('plex_url') || '';
 
-      const token = userToken || adminToken;
-      const serverUrl = userServerUrl || adminUrl;
+      let token: string | undefined;
+      let serverUrl: string;
+
+      if (userToken && userServerUrl) {
+        token = userToken;
+        serverUrl = userServerUrl;
+      } else {
+        token = adminToken;
+        serverUrl = adminUrl;
+      }
 
       if (!token || !serverUrl) {
         return res.status(500).json({ error: 'Plex server not configured' });
