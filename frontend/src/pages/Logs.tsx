@@ -167,11 +167,9 @@ export const Logs: React.FC = () => {
             ) : logs.length === 0 ? (
               <div className="card p-8 text-center">
                 <p className="text-gray-400">No logs found</p>
-                {process.env.NODE_ENV !== 'production' && (
-                  <p className="text-sm text-gray-500 mt-2">
-                    Logs are only available in production mode when file logging is enabled.
-                  </p>
-                )}
+                <p className="text-sm text-gray-500 mt-2">
+                  Logs are only available when file logging is enabled.
+                </p>
               </div>
             ) : (
               <>
@@ -198,22 +196,23 @@ export const Logs: React.FC = () => {
                           <div className="text-white break-words">
                             {log.message}
                           </div>
-                          {log.meta && Object.keys(log.meta).filter(k => !['timestamp', 'level', 'message', 'service']).length > 0 && (
-                            <details className="mt-2">
-                              <summary className="text-xs text-gray-500 cursor-pointer hover:text-gray-400">
-                                Show metadata
-                              </summary>
-                              <pre className="mt-2 p-2 bg-dark-300 rounded text-xs text-gray-400 overflow-auto">
-                                {JSON.stringify(
-                                  Object.fromEntries(
-                                    Object.entries(log.meta).filter(([k]) => !['timestamp', 'level', 'message', 'service'].includes(k))
-                                  ),
-                                  null,
-                                  2
-                                )}
-                              </pre>
-                            </details>
-                          )}
+                          {(() => {
+                            if (!log.meta) return null;
+                            const excludedKeys = ['timestamp', 'level', 'message', 'service'];
+                            const filteredEntries = Object.entries(log.meta).filter(([key]) => !excludedKeys.includes(key));
+                            if (filteredEntries.length === 0) return null;
+
+                            return (
+                              <details className="mt-2">
+                                <summary className="text-xs text-gray-500 cursor-pointer hover:text-gray-400">
+                                  Show metadata
+                                </summary>
+                                <pre className="mt-2 p-2 bg-dark-300 rounded text-xs text-gray-400 overflow-auto">
+                                  {JSON.stringify(Object.fromEntries(filteredEntries), null, 2)}
+                                </pre>
+                              </details>
+                            );
+                          })()}
                         </div>
                       </div>
                     </div>
