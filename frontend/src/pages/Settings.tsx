@@ -38,15 +38,15 @@ export const Settings: React.FC = () => {
     setMessage(null);
 
     try {
-      await api.updateSettings({
-        plexUrl: plexUrl || undefined,
-        hasPlexToken: plexToken ? true : undefined,
-      });
-
-      // If plexToken is provided, we need to send it
-      if (plexToken) {
-        await api.updateSettings({ plexUrl, hasPlexToken: true });
+      const updateData: any = {};
+      if (plexUrl) {
+        updateData.plexUrl = plexUrl;
       }
+      if (plexToken) {
+        updateData.plexToken = plexToken;
+      }
+
+      await api.updateSettings(updateData);
 
       setMessage({ type: 'success', text: 'Settings saved successfully' });
       await loadSettings();
@@ -108,14 +108,18 @@ export const Settings: React.FC = () => {
                     <div>
                       <label className="block text-sm font-medium mb-2">Plex Server URL</label>
                       <input
-                        type="url"
+                        type="text"
                         className="input"
-                        placeholder="http://your-plex-server:32400"
+                        placeholder="http://127.0.0.1:32400"
                         value={plexUrl}
                         onChange={(e) => setPlexUrl(e.target.value)}
                       />
                       <p className="text-xs text-gray-500 mt-1">
-                        The URL of your Plex Media Server
+                        The URL of your Plex Media Server. For local Docker containers, use:
+                        <br />
+                        • <code className="text-gray-400">http://127.0.0.1:32400</code> or <code className="text-gray-400">http://localhost:32400</code>
+                        <br />
+                        • <code className="text-gray-400">http://host.docker.internal:32400</code> (from Docker container)
                       </p>
                     </div>
 

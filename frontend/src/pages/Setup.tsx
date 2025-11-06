@@ -1,5 +1,4 @@
 import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { api } from '../services/api';
 import { useAuthStore } from '../stores/authStore';
 
@@ -7,13 +6,9 @@ export const Setup: React.FC = () => {
   const [formData, setFormData] = useState({
     username: '',
     password: '',
-    email: '',
-    plexUrl: '',
-    plexToken: '',
   });
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const navigate = useNavigate();
   const { setUser, setToken } = useAuthStore();
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -25,7 +20,8 @@ export const Setup: React.FC = () => {
       const response = await api.setup(formData);
       setUser(response.user);
       setToken(response.token);
-      navigate('/');
+      // Reload the app to trigger the setup check again
+      window.location.href = '/';
     } catch (err: any) {
       setError(err.response?.data?.error || 'Setup failed');
     } finally {
@@ -67,45 +63,8 @@ export const Setup: React.FC = () => {
               />
             </div>
 
-            <div>
-              <label className="block text-sm font-medium mb-2">Admin Email</label>
-              <input
-                type="email"
-                required
-                className="input"
-                value={formData.email}
-                onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-              />
-            </div>
-
-            <div className="pt-4 border-t border-dark-50">
-              <p className="text-sm text-gray-400 mb-4">
-                Plex Server Configuration (Optional - can be configured later)
-              </p>
-
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium mb-2">Plex Server URL</label>
-                  <input
-                    type="url"
-                    className="input"
-                    placeholder="http://your-plex-server:32400"
-                    value={formData.plexUrl}
-                    onChange={(e) => setFormData({ ...formData, plexUrl: e.target.value })}
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium mb-2">Plex Token</label>
-                  <input
-                    type="password"
-                    className="input"
-                    placeholder="Your Plex authentication token"
-                    value={formData.plexToken}
-                    onChange={(e) => setFormData({ ...formData, plexToken: e.target.value })}
-                  />
-                </div>
-              </div>
+            <div className="text-sm text-gray-400 mt-4">
+              You can configure your Plex server connection in the Settings page after setup.
             </div>
 
             {error && (

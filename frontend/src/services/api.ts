@@ -50,9 +50,6 @@ class ApiClient {
   async setup(data: {
     username: string;
     password: string;
-    email: string;
-    plexUrl?: string;
-    plexToken?: string;
   }): Promise<AuthResponse> {
     const response = await this.client.post<AuthResponse>('/auth/setup', data);
     return response.data;

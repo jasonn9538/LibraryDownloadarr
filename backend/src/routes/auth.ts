@@ -22,31 +22,22 @@ export const createAuthRouter = (db: DatabaseService) => {
         return res.status(400).json({ error: 'Setup already completed' });
       }
 
-      const { username, password, email, plexUrl, plexToken } = req.body;
+      const { username, password } = req.body;
 
-      if (!username || !password || !email) {
-        return res.status(400).json({ error: 'Username, password, and email are required' });
+      if (!username || !password) {
+        return res.status(400).json({ error: 'Username and password are required' });
       }
 
       // Hash password
       const passwordHash = await bcrypt.hash(password, 10);
 
-      // Create admin user
+      // Create admin user (email is optional, use username@localhost as default)
       const adminUser = db.createAdminUser({
         username,
         passwordHash,
-        email,
+        email: `${username}@localhost`,
         isAdmin: true,
       });
-
-      // Save Plex settings if provided
-      if (plexUrl) {
-        db.setSetting('plex_url', plexUrl);
-        plexService.setServerConnection(plexUrl, plexToken || '');
-      }
-      if (plexToken) {
-        db.setSetting('plex_token', plexToken);
-      }
 
       // Create session
       const session = db.createSession(adminUser.id);

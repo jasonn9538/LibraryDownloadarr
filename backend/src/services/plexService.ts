@@ -66,6 +66,7 @@ export interface PlexAuthResponse {
 
 export class PlexService {
   private client: PlexAPI | null = null;
+  private plexUrl: string | null = null;
 
   constructor() {
     if (config.plex.url && config.plex.token) {
@@ -73,7 +74,25 @@ export class PlexService {
     }
   }
 
-  private initializeClient(hostname: string, token: string): void {
+  private parseHostname(urlOrHostname: string): string {
+    try {
+      // If it starts with http:// or https://, parse it
+      if (urlOrHostname.startsWith('http://') || urlOrHostname.startsWith('https://')) {
+        const url = new URL(urlOrHostname);
+        return url.host; // This includes port if present
+      }
+      // Otherwise assume it's already in host:port format
+      return urlOrHostname;
+    } catch (error) {
+      logger.warn('Failed to parse Plex URL, using as-is', { urlOrHostname, error });
+      return urlOrHostname;
+    }
+  }
+
+  private initializeClient(urlOrHostname: string, token: string): void {
+    const hostname = this.parseHostname(urlOrHostname);
+    this.plexUrl = urlOrHostname.startsWith('http') ? urlOrHostname : `http://${urlOrHostname}`;
+
     this.client = new PlexAPI({
       hostname,
       token,
@@ -84,11 +103,11 @@ export class PlexService {
         deviceName: config.plex.device,
       },
     });
-    logger.info('Plex client initialized');
+    logger.info('Plex client initialized', { hostname });
   }
 
-  setServerConnection(hostname: string, token: string): void {
-    this.initializeClient(hostname, token);
+  setServerConnection(urlOrHostname: string, token: string): void {
+    this.initializeClient(urlOrHostname, token);
   }
 
   async testConnection(): Promise<boolean> {
@@ -296,19 +315,21 @@ export class PlexService {
   }
 
   getDownloadUrl(partKey: string, token: string): string {
-    if (!config.plex.url) {
+    const baseUrl = this.plexUrl || config.plex.url;
+    if (!baseUrl) {
       throw new Error('Plex server URL not configured');
     }
 
-    return `${config.plex.url}${partKey}?download=1&X-Plex-Token=${token}`;
+    return `${baseUrl}${partKey}?download=1&X-Plex-Token=${token}`;
   }
 
   getThumbnailUrl(thumbPath: string, token: string): string {
-    if (!config.plex.url || !thumbPath) {
+    const baseUrl = this.plexUrl || config.plex.url;
+    if (!baseUrl || !thumbPath) {
       return '';
     }
 
-    return `${config.plex.url}${thumbPath}?X-Plex-Token=${token}`;
+    return `${baseUrl}${thumbPath}?X-Plex-Token=${token}`;
   }
 }
 
