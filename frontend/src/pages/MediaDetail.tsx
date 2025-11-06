@@ -89,11 +89,9 @@ export const MediaDetail: React.FC = () => {
     return download?.progress || 0;
   };
 
-  const handleDownload = async (partKey: string, filename: string) => {
-    if (!ratingKey || !media) return;
-
-    // Use the global download context
-    await startDownload(ratingKey, partKey, filename, media.title);
+  const handleDownload = async (itemRatingKey: string, partKey: string, filename: string, itemTitle: string) => {
+    // Use the global download context with the specific item's rating key
+    await startDownload(itemRatingKey, partKey, filename, itemTitle);
   };
 
   const formatFileSize = (bytes: number): string => {
@@ -234,8 +232,10 @@ export const MediaDetail: React.FC = () => {
                                   <button
                                     onClick={() =>
                                       handleDownload(
+                                        track.ratingKey,
                                         track.Media![0].Part[0].key,
-                                        track.Media![0].Part[0].file.split('/').pop() || 'download'
+                                        track.Media![0].Part[0].file.split('/').pop() || 'download',
+                                        track.title
                                       )
                                     }
                                     disabled={isDownloading(track.Media![0].Part[0].key)}
@@ -293,8 +293,10 @@ export const MediaDetail: React.FC = () => {
                                   <button
                                     onClick={() =>
                                       handleDownload(
+                                        episode.ratingKey,
                                         episode.Media![0].Part[0].key,
-                                        episode.Media![0].Part[0].file.split('/').pop() || 'download'
+                                        episode.Media![0].Part[0].file.split('/').pop() || 'download',
+                                        episode.title
                                       )
                                     }
                                     disabled={isDownloading(episode.Media![0].Part[0].key)}
@@ -385,8 +387,10 @@ export const MediaDetail: React.FC = () => {
                                             <button
                                               onClick={() =>
                                                 handleDownload(
+                                                  episode.ratingKey,
                                                   episode.Media![0].Part[0].key,
-                                                  episode.Media![0].Part[0].file.split('/').pop() || 'download'
+                                                  episode.Media![0].Part[0].file.split('/').pop() || 'download',
+                                                  episode.title
                                                 )
                                               }
                                               disabled={isDownloading(episode.Media![0].Part[0].key)}
@@ -441,7 +445,12 @@ export const MediaDetail: React.FC = () => {
                                   <div key={partIdx} className="flex flex-col items-end gap-2">
                                     <button
                                       onClick={() =>
-                                        handleDownload(part.key, part.file.split('/').pop() || 'download')
+                                        handleDownload(
+                                          ratingKey!,
+                                          part.key,
+                                          part.file.split('/').pop() || 'download',
+                                          media.title
+                                        )
                                       }
                                       disabled={isDownloading(part.key)}
                                       className="btn-primary disabled:opacity-50 disabled:cursor-not-allowed"
