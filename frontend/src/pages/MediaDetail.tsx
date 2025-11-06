@@ -302,20 +302,30 @@ export const MediaDetail: React.FC = () => {
                                 </div>
                               </div>
                               {track.Media?.[0]?.Part?.[0] && (
-                                <button
-                                  onClick={() =>
-                                    handleDownload(
-                                      track.Media![0].Part[0].key,
-                                      track.Media![0].Part[0].file.split('/').pop() || 'download'
-                                    )
-                                  }
-                                  disabled={downloadingKeys.has(track.Media![0].Part[0].key)}
-                                  className="btn-primary disabled:opacity-50 disabled:cursor-not-allowed"
-                                >
-                                  {downloadingKeys.has(track.Media![0].Part[0].key)
-                                    ? `${downloadProgress[track.Media![0].Part[0].key] || 0}%`
-                                    : 'Download'}
-                                </button>
+                                <div className="flex flex-col items-end gap-2">
+                                  <button
+                                    onClick={() =>
+                                      handleDownload(
+                                        track.Media![0].Part[0].key,
+                                        track.Media![0].Part[0].file.split('/').pop() || 'download'
+                                      )
+                                    }
+                                    disabled={downloadingKeys.has(track.Media![0].Part[0].key)}
+                                    className="btn-primary disabled:opacity-50 disabled:cursor-not-allowed"
+                                  >
+                                    {downloadingKeys.has(track.Media![0].Part[0].key)
+                                      ? `${downloadProgress[track.Media![0].Part[0].key] || 0}%`
+                                      : 'Download'}
+                                  </button>
+                                  {downloadingKeys.has(track.Media![0].Part[0].key) && (
+                                    <div className="w-32 h-2 bg-dark-200 rounded-full overflow-hidden">
+                                      <div
+                                        className="h-full bg-gradient-to-r from-primary-500 to-primary-400 transition-all duration-300 ease-out"
+                                        style={{ width: `${downloadProgress[track.Media![0].Part[0].key] || 0}%` }}
+                                      />
+                                    </div>
+                                  )}
+                                </div>
                               )}
                             </div>
                           ))}
@@ -384,20 +394,30 @@ export const MediaDetail: React.FC = () => {
                                           </div>
                                         </div>
                                         {episode.Media?.[0]?.Part?.[0] && (
-                                          <button
-                                            onClick={() =>
-                                              handleDownload(
-                                                episode.Media![0].Part[0].key,
-                                                episode.Media![0].Part[0].file.split('/').pop() || 'download'
-                                              )
-                                            }
-                                            disabled={downloadingKeys.has(episode.Media![0].Part[0].key)}
-                                            className="btn-primary disabled:opacity-50 disabled:cursor-not-allowed"
-                                          >
-                                            {downloadingKeys.has(episode.Media![0].Part[0].key)
-                                              ? `${downloadProgress[episode.Media![0].Part[0].key] || 0}%`
-                                              : 'Download'}
-                                          </button>
+                                          <div className="flex flex-col items-end gap-2">
+                                            <button
+                                              onClick={() =>
+                                                handleDownload(
+                                                  episode.Media![0].Part[0].key,
+                                                  episode.Media![0].Part[0].file.split('/').pop() || 'download'
+                                                )
+                                              }
+                                              disabled={downloadingKeys.has(episode.Media![0].Part[0].key)}
+                                              className="btn-primary disabled:opacity-50 disabled:cursor-not-allowed"
+                                            >
+                                              {downloadingKeys.has(episode.Media![0].Part[0].key)
+                                                ? `${downloadProgress[episode.Media![0].Part[0].key] || 0}%`
+                                                : 'Download'}
+                                            </button>
+                                            {downloadingKeys.has(episode.Media![0].Part[0].key) && (
+                                              <div className="w-32 h-2 bg-dark-200 rounded-full overflow-hidden">
+                                                <div
+                                                  className="h-full bg-gradient-to-r from-primary-500 to-primary-400 transition-all duration-300 ease-out"
+                                                  style={{ width: `${downloadProgress[episode.Media![0].Part[0].key] || 0}%` }}
+                                                />
+                                              </div>
+                                            )}
+                                          </div>
                                         )}
                                       </div>
                                     ))
@@ -431,18 +451,27 @@ export const MediaDetail: React.FC = () => {
                                   </div>
                                 </div>
                                 {mediaPart.Part.map((part, partIdx) => (
-                                  <button
-                                    key={partIdx}
-                                    onClick={() =>
-                                      handleDownload(part.key, part.file.split('/').pop() || 'download')
-                                    }
-                                    disabled={downloadingKeys.has(part.key)}
-                                    className="btn-primary disabled:opacity-50 disabled:cursor-not-allowed"
-                                  >
-                                    {downloadingKeys.has(part.key)
-                                      ? `${downloadProgress[part.key] || 0}%`
-                                      : 'Download'}
-                                  </button>
+                                  <div key={partIdx} className="flex flex-col items-end gap-2">
+                                    <button
+                                      onClick={() =>
+                                        handleDownload(part.key, part.file.split('/').pop() || 'download')
+                                      }
+                                      disabled={downloadingKeys.has(part.key)}
+                                      className="btn-primary disabled:opacity-50 disabled:cursor-not-allowed"
+                                    >
+                                      {downloadingKeys.has(part.key)
+                                        ? `${downloadProgress[part.key] || 0}%`
+                                        : 'Download'}
+                                    </button>
+                                    {downloadingKeys.has(part.key) && (
+                                      <div className="w-32 h-2 bg-dark-200 rounded-full overflow-hidden">
+                                        <div
+                                          className="h-full bg-gradient-to-r from-primary-500 to-primary-400 transition-all duration-300 ease-out"
+                                          style={{ width: `${downloadProgress[part.key] || 0}%` }}
+                                        />
+                                      </div>
+                                    )}
+                                  </div>
                                 ))}
                               </div>
                             </div>

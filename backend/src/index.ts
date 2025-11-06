@@ -10,6 +10,7 @@ import { createAuthRouter } from './routes/auth';
 import { createLibrariesRouter } from './routes/libraries';
 import { createMediaRouter } from './routes/media';
 import { createSettingsRouter } from './routes/settings';
+import { createLogsRouter } from './routes/logs';
 
 // Initialize database
 const db = new DatabaseService(config.database.path);
@@ -49,6 +50,7 @@ app.use('/api/auth', createAuthRouter(db));
 app.use('/api/libraries', createLibrariesRouter(db));
 app.use('/api/media', createMediaRouter(db));
 app.use('/api/settings', createSettingsRouter(db));
+app.use('/api/logs', createLogsRouter(db));
 
 // Serve static files in production
 if (config.server.nodeEnv === 'production') {

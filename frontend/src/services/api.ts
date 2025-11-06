@@ -176,6 +176,18 @@ class ApiClient {
     });
     return response.data.connected;
   }
+
+  // Logs endpoints
+  async getLogs(params: {
+    level?: string;
+    search?: string;
+    page?: number;
+    limit?: number;
+    sortOrder?: 'asc' | 'desc';
+  }): Promise<{ logs: any[]; total: number; page: number; limit: number; totalPages: number }> {
+    const response = await this.client.get('/logs', { params });
+    return response.data;
+  }
 }
 
 export const api = new ApiClient();

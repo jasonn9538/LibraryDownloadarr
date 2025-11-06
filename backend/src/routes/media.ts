@@ -100,6 +100,60 @@ export const createMediaRouter = (db: DatabaseService) => {
     }
   });
 
+  // Helper function to calculate relevance score
+  const calculateRelevanceScore = (item: any, query: string): number => {
+    const queryLower = query.toLowerCase();
+    const title = (item.title || '').toLowerCase();
+    const originalTitle = (item.originalTitle || '').toLowerCase();
+    const year = item.year?.toString() || '';
+    const summary = (item.summary || '').toLowerCase();
+
+    let score = 0;
+
+    // Exact title match: highest score
+    if (title === queryLower) {
+      score += 100;
+    }
+    // Title starts with query
+    else if (title.startsWith(queryLower)) {
+      score += 80;
+    }
+    // Title contains query
+    else if (title.includes(queryLower)) {
+      score += 60;
+    }
+
+    // Original title matches
+    if (originalTitle.includes(queryLower)) {
+      score += 30;
+    }
+
+    // Year matches
+    if (year === query) {
+      score += 50;
+    }
+
+    // Summary contains query
+    if (summary.includes(queryLower)) {
+      score += 20;
+    }
+
+    // Boost movies and shows over other types
+    if (item.type === 'movie' || item.type === 'show') {
+      score += 10;
+    }
+
+    // Boost recently added items slightly
+    if (item.addedAt) {
+      const daysOld = (Date.now() - item.addedAt * 1000) / (1000 * 60 * 60 * 24);
+      if (daysOld < 30) {
+        score += 5;
+      }
+    }
+
+    return score;
+  };
+
   // Search media
   router.get('/search', authMiddleware, async (req: AuthRequest, res) => {
     try {
@@ -108,22 +162,59 @@ export const createMediaRouter = (db: DatabaseService) => {
         return res.status(400).json({ error: 'Search query is required' });
       }
 
+      if (q.trim().length < 2) {
+        return res.status(400).json({ error: 'Search query must be at least 2 characters' });
+      }
+
       const { token, serverUrl, error } = getUserCredentials(req);
 
       if (error) {
+        logger.warn('Search access denied', { userId: req.user?.id, error });
         return res.status(403).json({ error });
       }
 
       if (!token || !serverUrl) {
+        logger.error('Search failed: Plex not configured', { userId: req.user?.id });
         return res.status(500).json({ error: 'Plex server not configured' });
       }
 
+      logger.info('Performing search', { query: q, userId: req.user?.id });
+
       plexService.setServerConnection(serverUrl, token);
-      const results = await plexService.search(q, token);
-      return res.json({ results });
-    } catch (error) {
-      logger.error('Search failed', { error });
-      return res.status(500).json({ error: 'Search failed' });
+      let results = await plexService.search(q, token);
+
+      // Ensure results is an array
+      if (!Array.isArray(results)) {
+        logger.warn('Search returned non-array results', { results });
+        results = [];
+      }
+
+      // Calculate relevance scores and sort by them
+      const scoredResults = results.map(item => ({
+        ...item,
+        _relevanceScore: calculateRelevanceScore(item, q)
+      }));
+
+      // Sort by relevance score (descending)
+      scoredResults.sort((a, b) => b._relevanceScore - a._relevanceScore);
+
+      // Remove the score field before sending to client
+      const finalResults = scoredResults.map(({ _relevanceScore, ...item }) => item);
+
+      logger.info('Search completed', { query: q, resultCount: finalResults.length });
+
+      return res.json({ results: finalResults });
+    } catch (error: any) {
+      logger.error('Search failed', {
+        error: error.message,
+        stack: error.stack,
+        query: req.query.q,
+        userId: req.user?.id
+      });
+      return res.status(500).json({
+        error: 'Search failed',
+        details: error.message
+      });
     }
   });
 

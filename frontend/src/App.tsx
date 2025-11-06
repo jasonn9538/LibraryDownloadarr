@@ -10,6 +10,7 @@ import { MediaDetail } from './pages/MediaDetail';
 import { Settings } from './pages/Settings';
 import { SearchResults } from './pages/SearchResults';
 import { DownloadHistory } from './pages/DownloadHistory';
+import { Logs } from './pages/Logs';
 
 const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { token } = useAuthStore();
@@ -111,6 +112,14 @@ const App: React.FC = () => {
               element={
                 <ProtectedRoute>
                   <DownloadHistory />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/admin/logs"
+              element={
+                <ProtectedRoute>
+                  <Logs />
                 </ProtectedRoute>
               }
             />

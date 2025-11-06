@@ -31,15 +31,34 @@ export const Sidebar: React.FC = () => {
   return (
     <aside className="w-64 bg-dark-100 border-r border-dark-50 p-4">
       <nav className="space-y-2">
+        <button
+          onClick={() => navigate('/')}
+          className={`w-full text-left px-4 py-2 rounded-lg transition-colors ${
+            isActive('/') ? 'bg-dark-200 text-primary-400' : 'hover:bg-dark-200'
+          }`}
+        >
+          🏠 Home
+        </button>
+
         {user?.isAdmin && (
-          <button
-            onClick={() => navigate('/')}
-            className={`w-full text-left px-4 py-2 rounded-lg transition-colors ${
-              isActive('/') ? 'bg-dark-200 text-primary-400' : 'hover:bg-dark-200'
-            }`}
-          >
-            Home
-          </button>
+          <>
+            <button
+              onClick={() => navigate('/admin/download-history')}
+              className={`w-full text-left px-4 py-2 rounded-lg transition-colors ${
+                isActive('/admin/download-history') ? 'bg-dark-200 text-primary-400' : 'hover:bg-dark-200'
+              }`}
+            >
+              📊 Download History
+            </button>
+            <button
+              onClick={() => navigate('/admin/logs')}
+              className={`w-full text-left px-4 py-2 rounded-lg transition-colors ${
+                isActive('/admin/logs') ? 'bg-dark-200 text-primary-400' : 'hover:bg-dark-200'
+              }`}
+            >
+              📋 Logs
+            </button>
+          </>
         )}
 
         {isLoading ? (

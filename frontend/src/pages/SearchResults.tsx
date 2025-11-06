@@ -22,14 +22,22 @@ export const SearchResults: React.FC = () => {
   const performSearch = async () => {
     if (!query.trim()) return;
 
+    if (query.trim().length < 2) {
+      setError('Search query must be at least 2 characters');
+      return;
+    }
+
     setIsLoading(true);
     setError('');
 
     try {
       const results = await api.searchMedia(query);
-      setMedia(results);
+      setMedia(results || []);
     } catch (err: any) {
-      setError(err.response?.data?.error || 'Search failed');
+      const errorMessage = err.response?.data?.error || 'Search failed';
+      const errorDetails = err.response?.data?.details;
+      setError(errorDetails ? `${errorMessage}: ${errorDetails}` : errorMessage);
+      setMedia([]);
     } finally {
       setIsLoading(false);
     }
