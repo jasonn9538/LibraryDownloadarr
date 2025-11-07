@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { DatabaseService } from '../models/database';
 import { plexService } from '../services/plexService';
 import { logger } from '../utils/logger';
+import { config } from '../config';
 import { AuthRequest, createAuthMiddleware, createAdminMiddleware } from '../middleware/auth';
 
 export const createSettingsRouter = (db: DatabaseService) => {
@@ -12,8 +13,9 @@ export const createSettingsRouter = (db: DatabaseService) => {
   // Get settings (admin only)
   router.get('/', authMiddleware, adminMiddleware, (_req: AuthRequest, res) => {
     try {
-      const plexUrl = db.getSetting('plex_url') || '';
-      const plexToken = db.getSetting('plex_token') || '';
+      // Use database values first, fall back to environment variables
+      const plexUrl = db.getSetting('plex_url') || config.plex.url || '';
+      const plexToken = db.getSetting('plex_token') || config.plex.token || '';
       const plexMachineId = db.getSetting('plex_machine_id') || '';
 
       return res.json({
@@ -41,10 +43,10 @@ export const createSettingsRouter = (db: DatabaseService) => {
         db.setSetting('plex_token', plexToken);
       }
 
-      // Update Plex service connection
+      // Update Plex service connection - use database first, then environment variables as fallback
       if (plexUrl || plexToken) {
-        const url = plexUrl || db.getSetting('plex_url') || '';
-        const token = plexToken || db.getSetting('plex_token') || '';
+        const url = plexUrl || db.getSetting('plex_url') || config.plex.url || '';
+        const token = plexToken || db.getSetting('plex_token') || config.plex.token || '';
         plexService.setServerConnection(url, token);
       }
 
@@ -79,8 +81,9 @@ export const createSettingsRouter = (db: DatabaseService) => {
   // Fetch server machine ID from Plex server (admin only)
   router.post('/fetch-machine-id', authMiddleware, adminMiddleware, async (_req: AuthRequest, res) => {
     try {
-      const plexUrl = db.getSetting('plex_url') || '';
-      const plexToken = db.getSetting('plex_token') || '';
+      // Use database values first, fall back to environment variables
+      const plexUrl = db.getSetting('plex_url') || config.plex.url || '';
+      const plexToken = db.getSetting('plex_token') || config.plex.token || '';
 
       if (!plexUrl || !plexToken) {
         return res.status(400).json({ error: 'Plex URL and token must be configured first' });

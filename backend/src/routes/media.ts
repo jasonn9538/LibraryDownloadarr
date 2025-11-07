@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { DatabaseService } from '../models/database';
 import { plexService } from '../services/plexService';
 import { logger } from '../utils/logger';
+import { config } from '../config';
 import { AuthRequest, createAuthMiddleware } from '../middleware/auth';
 import axios from 'axios';
 
@@ -44,8 +45,9 @@ export const createMediaRouter = (db: DatabaseService) => {
   const getUserCredentials = (req: AuthRequest): { token: string | undefined; serverUrl: string; error?: string } => {
     const userToken = req.user?.plexToken;
     const isAdmin = req.user?.isAdmin;
-    const adminToken = db.getSetting('plex_token') || undefined;
-    const adminUrl = db.getSetting('plex_url') || '';
+    // Use database values first, fall back to environment variables
+    const adminToken = db.getSetting('plex_token') || config.plex.token || undefined;
+    const adminUrl = db.getSetting('plex_url') || config.plex.url || '';
 
     // All users (including admins) must use admin's configured server URL
     // This prevents users from using the app to download from arbitrary Plex servers
