@@ -62,23 +62,13 @@ export const createLogsRouter = (db: DatabaseService) => {
       const pageNum = parseInt(page as string, 10);
       const limitNum = parseInt(limit as string, 10);
 
-      // In production, read from log files
-      // In development, return recent in-memory logs
-      const isProduction = process.env.NODE_ENV === 'production';
+      // Read from combined.log file
+      const logFilePath = path.join(process.cwd(), 'logs', 'combined.log');
 
       let logs: LogEntry[] = [];
 
-      if (isProduction) {
-        // Read from combined.log file
-        const logFilePath = path.join(process.cwd(), 'logs', 'combined.log');
-
-        if (fs.existsSync(logFilePath)) {
-          logs = await readLogFile(logFilePath);
-        }
-      } else {
-        // For development, we'll use in-memory logs if available
-        // Winston doesn't provide in-memory storage by default, so we'll return a message
-        logs = [];
+      if (fs.existsSync(logFilePath)) {
+        logs = await readLogFile(logFilePath);
       }
 
       // Filter by level
