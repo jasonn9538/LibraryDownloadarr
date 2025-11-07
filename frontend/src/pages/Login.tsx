@@ -38,15 +38,23 @@ export const Login: React.FC = () => {
     setError('');
     setIsPlexLoading(true);
 
+    // IMPORTANT: Open window immediately (synchronously) before any async operations
+    // Mobile browsers block window.open() if it's not directly in the click handler
+    const authWindow = window.open('about:blank', '_blank', 'width=600,height=700');
+
     try {
       // Generate PIN
       const pin = await api.generatePlexPin();
 
-      // Open Plex auth in new window/tab
-      // - On desktop: opens popup window
-      // - On mobile browser: opens new tab
-      // - On PWA: opens sub-window
-      window.open(pin.url, '_blank', 'width=600,height=700');
+      // Navigate the already-opened window to Plex auth
+      if (authWindow) {
+        authWindow.location.href = pin.url;
+      } else {
+        // Fallback if popup was blocked
+        setError('Popup blocked. Please allow popups for this site and try again.');
+        setIsPlexLoading(false);
+        return;
+      }
 
       // Poll for authentication
       const maxAttempts = 60; // 2 minutes (60 * 2 seconds)
@@ -91,6 +99,10 @@ export const Login: React.FC = () => {
     } catch (err: any) {
       setError(err.response?.data?.error || 'Failed to initiate Plex login');
       setIsPlexLoading(false);
+      // Close the blank window if PIN generation failed
+      if (authWindow) {
+        authWindow.close();
+      }
     }
   };
 
