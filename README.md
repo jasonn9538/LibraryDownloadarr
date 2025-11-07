@@ -1,5 +1,9 @@
 # PlexDownloadarr
 
+<p align="center">
+  <img src="plexdownloadarr.png" alt="PlexDownloadarr Banner" width="600"/>
+</p>
+
 > Your Plex library, ready to download
 
 PlexDownloadarr is a modern web application that provides a user-friendly interface for downloading media from a Plex Media Server. It integrates with Plex's authentication system and respects user permissions, while presenting library content in a sleek, browsable interface similar to Overseerr or Wizarr.
