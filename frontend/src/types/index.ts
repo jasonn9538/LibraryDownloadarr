@@ -73,4 +73,5 @@ export interface Settings {
   plexUrl: string;
   hasPlexToken: boolean;
   plexMachineId?: string;
+  plexServerName?: string;
 }
