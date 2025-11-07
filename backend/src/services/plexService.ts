@@ -458,32 +458,45 @@ export class PlexService {
         return null;
       }
 
-      const response = await axios.get(`${url}/identity`, {
+      // Get machine identifier from /identity endpoint
+      const identityResponse = await axios.get(`${url}/identity`, {
         headers: {
           'X-Plex-Token': token,
           'Accept': 'application/json',
         },
       });
 
-      const data = response.data?.MediaContainer;
+      const identityData = identityResponse.data?.MediaContainer;
+      const machineIdentifier = identityData?.machineIdentifier;
 
-      // Log the full response to debug field names
-      logger.info('Plex identity response', {
-        data,
-        keys: data ? Object.keys(data) : []
-      });
-
-      if (data?.machineIdentifier) {
-        // Try multiple possible field names for the server name
-        const serverName = data.friendlyName || data.title || data.name || 'Unknown Server';
-
-        return {
-          machineIdentifier: data.machineIdentifier,
-          friendlyName: serverName
-        };
+      if (!machineIdentifier) {
+        logger.error('No machine identifier in identity response');
+        return null;
       }
 
-      return null;
+      // Get server name from root endpoint (/ has friendlyName)
+      const rootResponse = await axios.get(`${url}/`, {
+        headers: {
+          'X-Plex-Token': token,
+          'Accept': 'application/json',
+        },
+      });
+
+      const rootData = rootResponse.data?.MediaContainer;
+
+      logger.info('Plex root response for server name', {
+        friendlyName: rootData?.friendlyName,
+        title: rootData?.title,
+        keys: rootData ? Object.keys(rootData).slice(0, 10) : []
+      });
+
+      // The root endpoint should have friendlyName
+      const serverName = rootData?.friendlyName || rootData?.title || 'Plex Server';
+
+      return {
+        machineIdentifier,
+        friendlyName: serverName
+      };
     } catch (error) {
       logger.error('Failed to get server identity', { error });
       return null;
