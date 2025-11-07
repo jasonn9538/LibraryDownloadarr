@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { api } from '../services/api';
 
 interface Download {
@@ -34,6 +34,25 @@ interface DownloadProviderProps {
 
 export const DownloadProvider: React.FC<DownloadProviderProps> = ({ children }) => {
   const [downloads, setDownloads] = useState<Download[]>([]);
+
+  // Warn user before closing/refreshing if downloads are in progress
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      const activeDownloads = downloads.filter(d => d.status === 'downloading');
+
+      if (activeDownloads.length > 0) {
+        // Standard way to show browser confirmation dialog
+        e.preventDefault();
+        e.returnValue = ''; // Chrome requires returnValue to be set
+      }
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+    };
+  }, [downloads]);
 
   const startDownload = async (
     ratingKey: string,
