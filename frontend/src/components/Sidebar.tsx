@@ -52,10 +52,16 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
       <aside
         className={`
           fixed md:static inset-y-0 left-0 z-50
-          w-64 bg-dark-100 border-r border-dark-50 p-4
+          w-64 bg-dark-100 border-r border-dark-50
           transform transition-transform duration-300 ease-in-out
           ${isOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
         `}
+        style={{
+          paddingTop: 'calc(1rem + env(safe-area-inset-top))',
+          paddingBottom: 'calc(1rem + env(safe-area-inset-bottom))',
+          paddingLeft: 'calc(1rem + env(safe-area-inset-left))',
+          paddingRight: '1rem',
+        }}
       >
         <nav className="space-y-2">
           <button

@@ -25,7 +25,10 @@ export const Header: React.FC<HeaderProps> = ({ onMenuClick }) => {
   };
 
   return (
-    <header className="bg-dark-100 border-b border-dark-50 px-4 md:px-6 py-3 md:py-4">
+    <header className="bg-dark-100 border-b border-dark-50 px-4 md:px-6" style={{
+      paddingTop: 'calc(0.75rem + env(safe-area-inset-top))',
+      paddingBottom: '0.75rem',
+    }}>
       <div className="flex items-center justify-between">
         <div className="flex items-center space-x-3">
           {/* Hamburger Menu Button (Mobile) */}
