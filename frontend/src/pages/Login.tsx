@@ -60,12 +60,29 @@ export const Login: React.FC = () => {
           setIsPlexLoading(false);
           navigate('/');
         } catch (err: any) {
+          // Check if this is a 403 (access denied) error
+          if (err.response?.status === 403) {
+            clearInterval(pollInterval);
+            setError(err.response?.data?.error || 'Access denied. You do not have access to this Plex server.');
+            setIsPlexLoading(false);
+            return;
+          }
+
+          // Check if this is a 500 (server error) - likely machine ID not configured
+          if (err.response?.status === 500) {
+            clearInterval(pollInterval);
+            setError(err.response?.data?.error || 'Server error. Please contact the administrator.');
+            setIsPlexLoading(false);
+            return;
+          }
+
+          // Check for timeout
           if (attempts >= maxAttempts) {
             clearInterval(pollInterval);
             setError('Plex authentication timeout. Please try again.');
             setIsPlexLoading(false);
           }
-          // Continue polling if not yet authorized
+          // Continue polling for 400 errors (not yet authorized)
         }
       }, 2000);
     } catch (err: any) {
