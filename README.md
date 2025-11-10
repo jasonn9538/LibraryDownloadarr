@@ -334,23 +334,6 @@ npm install
 npm run dev
 ```
 
-See [CLAUDE.md](./CLAUDE.md) for detailed developer documentation.
-
-### Areas We Need Help
-
-- 🎨 **UI/UX improvements** - Design enhancements, mobile optimization
-- 🐛 **Bug fixes** - Check the Issues tab
-- 📚 **Documentation** - Tutorials, guides, translations
-- ✨ **Features** - See our [Roadmap](#roadmap) below
-- 🧪 **Testing** - Test coverage, edge cases, cross-platform testing
-
-### Code of Conduct
-
-- Be respectful and inclusive
-- Provide constructive feedback
-- Focus on the issue, not the person
-- Follow project coding standards
-
 ---
 
 ## Troubleshooting
@@ -409,45 +392,6 @@ See [CLAUDE.md](./CLAUDE.md) for detailed developer documentation.
 
 ---
 
-## Roadmap
-
-### Current Features ✅
-- Plex OAuth authentication
-- Library browsing with posters and metadata
-- Search across all libraries
-- One-click downloads
-- Admin settings and configuration
-- Download history tracking
-- System logs viewer
-- Mobile-responsive design
-- Progressive Web App support
-
-### Planned Features 🚧
-
-**Short-term:**
-- [ ] Batch downloads (download multiple items as ZIP)
-- [ ] Quality selection (when multiple versions exist)
-- [ ] Download queue with progress tracking
-- [ ] Collections support
-- [ ] Advanced filters (genre, year, rating, resolution)
-
-**Mid-term:**
-- [ ] User management dashboard for admins
-- [ ] Email notifications for downloads
-- [ ] Download scheduling
-- [ ] API rate limiting per user
-- [ ] Multi-language support
-
-**Long-term:**
-- [ ] Mobile app (React Native)
-- [ ] Integration with external storage (S3, OneDrive, etc.)
-- [ ] Transcoding options before download
-- [ ] Plugin system for extensibility
-
-Want to help implement any of these? Check out [How to Contribute](#how-to-contribute)!
-
----
-
 ## Security Considerations
 
 **Production Deployment Checklist:**
@@ -473,7 +417,6 @@ Want to help implement any of these? Check out [How to Contribute](#how-to-contr
 ## Support & Community
 
 - 💬 **Issues**: [GitHub Issues](https://github.com/kikootwo/PlexDownloadarr/issues)
-- 📚 **Documentation**: See [CLAUDE.md](./CLAUDE.md) for developer docs
 - 🐛 **Bug Reports**: Use the issue template on GitHub
 - 💡 **Feature Requests**: Open an issue with the "enhancement" label
 
@@ -487,8 +430,6 @@ This project is licensed under the MIT License. See [LICENSE](LICENSE) file for 
 
 - Inspired by [Overseerr](https://overseerr.dev) and [Wizarr](https://wizarr.dev)
 - Built with [Plex API](https://www.plexopedia.com/plex-media-server/api/)
-- UI design inspired by the *arr ecosystem (Sonarr, Radarr, Prowlarr)
-- Special thanks to all [contributors](https://github.com/kikootwo/PlexDownloadarr/graphs/contributors)
 
 ---
 
