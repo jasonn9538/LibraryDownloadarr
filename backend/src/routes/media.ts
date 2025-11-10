@@ -373,20 +373,35 @@ export const createMediaRouter = (db: DatabaseService) => {
 
       const metadata = await plexService.getMediaMetadata(ratingKey, token);
 
-      // Check if user has download permission (allowSync field)
-      // SECURITY: Only allow downloads if allowSync is explicitly true/1/'1'
-      // Default to deny if undefined/null/false (secure by default)
-      const allowSync = metadata.allowSync;
-      const isDownloadAllowed = allowSync === true || allowSync === 1 || allowSync === '1';
+      // Log metadata for debugging permission issues
+      logger.info('Download request metadata', {
+        userId: req.user?.id,
+        username: req.user?.username,
+        isAdmin: req.user?.isAdmin,
+        ratingKey,
+        mediaTitle: metadata.title,
+        allowSync: metadata.allowSync,
+        allowSyncType: typeof metadata.allowSync,
+        metadataKeys: Object.keys(metadata).filter(k => k.includes('allow') || k.includes('sync') || k.includes('permission'))
+      });
 
-      if (!isDownloadAllowed) {
+      // Check if user has download permission
+      // Logic: Block ONLY if allowSync is explicitly disabled (false/0)
+      // - Admin users: always allowed (they manage the server)
+      // - Owned server users: allowSync undefined = allowed (no restriction)
+      // - Shared server users: allowSync false/0 = explicitly disabled
+      const isExplicitlyDisabled = metadata.allowSync === false ||
+                                   metadata.allowSync === 0 ||
+                                   metadata.allowSync === '0';
+
+      if (isExplicitlyDisabled && !req.user?.isAdmin) {
         logger.warn('Download denied: user lacks download permission', {
           userId: req.user?.id,
           username: req.user?.username,
+          isAdmin: req.user?.isAdmin,
           ratingKey,
           mediaTitle: metadata.title,
-          allowSync: metadata.allowSync,
-          allowSyncType: typeof metadata.allowSync
+          allowSync: metadata.allowSync
         });
         return res.status(403).json({
           error: 'Download not allowed. The server administrator has disabled downloads for your account.'
