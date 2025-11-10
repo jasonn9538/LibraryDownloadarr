@@ -42,6 +42,7 @@ export interface PlexMedia {
   index?: number;
   parentIndex?: number;
   parentRatingKey?: string;
+  allowSync?: boolean | number | string; // Download permission: false/0/'0' means download disabled
   Media?: Array<{
     id: number;
     duration: number;
