@@ -76,7 +76,10 @@ export const DownloadProvider: React.FC<DownloadProviderProps> = ({ children }) 
     setDownloads((prev) => [...prev, newDownload]);
 
     try {
-      const downloadUrl = api.getDownloadUrl(ratingKey, partKey);
+      // Check if partKey is already a full URL (for bulk downloads) or a path fragment
+      const downloadUrl = partKey.startsWith('/api/')
+        ? partKey // Already a full URL for bulk downloads
+        : api.getDownloadUrl(ratingKey, partKey); // Single file download
 
       // Fetch with progress tracking
       const response = await fetch(downloadUrl, {

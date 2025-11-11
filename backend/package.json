@@ -20,6 +20,7 @@
   "license": "MIT",
   "dependencies": {
     "@ctrl/plex": "^3.10.0",
+    "archiver": "^7.0.1",
     "axios": "^1.6.5",
     "bcrypt": "^5.1.1",
     "better-sqlite3": "^9.2.2",
@@ -34,6 +35,7 @@
     "winston": "^3.11.0"
   },
   "devDependencies": {
+    "@types/archiver": "^7.0.0",
     "@types/bcrypt": "^5.0.2",
     "@types/better-sqlite3": "^7.6.8",
     "@types/cors": "^2.8.17",

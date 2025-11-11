@@ -161,6 +161,14 @@ class ApiClient {
     return `/api/media/${ratingKey}/download?partKey=${encodeURIComponent(partKey)}`;
   }
 
+  getSeasonDownloadUrl(seasonRatingKey: string): string {
+    return `/api/media/season/${seasonRatingKey}/download`;
+  }
+
+  getAlbumDownloadUrl(albumRatingKey: string): string {
+    return `/api/media/album/${albumRatingKey}/download`;
+  }
+
   getThumbnailUrl(ratingKey: string, path: string): string {
     const token = localStorage.getItem('token');
     return `/api/media/thumb/${ratingKey}?path=${encodeURIComponent(path)}&token=${token}`;

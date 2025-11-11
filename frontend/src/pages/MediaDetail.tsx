@@ -96,6 +96,24 @@ export const MediaDetail: React.FC = () => {
     await startDownload(itemRatingKey, partKey, filename, itemTitle);
   };
 
+  const handleSeasonDownload = async (seasonRatingKey: string, seasonTitle: string) => {
+    const downloadUrl = api.getSeasonDownloadUrl(seasonRatingKey);
+    const showName = media?.title || 'Unknown Show';
+    const seasonNumber = seasons.find(s => s.ratingKey === seasonRatingKey)?.index || 0;
+    const zipFilename = `${showName} - S${String(seasonNumber).padStart(2, '0')}.zip`;
+
+    // Use the download context to track the season download
+    await startDownload(seasonRatingKey, downloadUrl, zipFilename, `${seasonTitle} (Full Season)`);
+  };
+
+  const handleAlbumDownload = async (albumRatingKey: string, albumTitle: string) => {
+    const downloadUrl = api.getAlbumDownloadUrl(albumRatingKey);
+    const zipFilename = `${albumTitle}.zip`;
+
+    // Use the download context to track the album download
+    await startDownload(albumRatingKey, downloadUrl, zipFilename, `${albumTitle} (Full Album)`);
+  };
+
   const formatFileSize = (bytes: number): string => {
     if (bytes === 0) return '0 Bytes';
     const k = 1024;
@@ -204,7 +222,21 @@ export const MediaDetail: React.FC = () => {
 
                   {/* Download Options */}
                   <div className="mt-4 md:mt-8">
-                    <h2 className="text-xl md:text-2xl font-semibold mb-4">Download</h2>
+                    <div className="flex items-center justify-between mb-4">
+                      <h2 className="text-xl md:text-2xl font-semibold">Download</h2>
+                      {media.type === 'album' && tracks.length > 0 && (
+                        <button
+                          onClick={() => handleAlbumDownload(ratingKey!, media.title)}
+                          disabled={isDownloading(api.getAlbumDownloadUrl(ratingKey!))}
+                          className="btn-primary disabled:opacity-50 disabled:cursor-not-allowed"
+                          title="Download entire album as ZIP"
+                        >
+                          {isDownloading(api.getAlbumDownloadUrl(ratingKey!))
+                            ? `${getDownloadProgress(api.getAlbumDownloadUrl(ratingKey!))}%`
+                            : '📦 Download Album'}
+                        </button>
+                      )}
+                    </div>
 
                     {media.type === 'album' ? (
                       // Album (Audiobook) - Show tracks
@@ -330,11 +362,11 @@ export const MediaDetail: React.FC = () => {
                         <div className="space-y-4">
                           {seasons.map((season) => (
                             <div key={season.ratingKey} className="card">
-                              <button
-                                onClick={() => toggleSeason(season.ratingKey)}
-                                className="w-full p-3 md:p-4 flex items-center justify-between hover:bg-dark-200 transition-colors"
-                              >
-                                <div className="flex items-center space-x-3 md:space-x-4">
+                              <div className="p-3 md:p-4 flex items-center justify-between">
+                                <button
+                                  onClick={() => toggleSeason(season.ratingKey)}
+                                  className="flex-1 flex items-center space-x-3 md:space-x-4 hover:bg-dark-200 transition-colors rounded -m-3 md:-m-4 p-3 md:p-4"
+                                >
                                   {season.thumb && (
                                     <img
                                       src={api.getThumbnailUrl(season.ratingKey, season.thumb)}
@@ -342,7 +374,7 @@ export const MediaDetail: React.FC = () => {
                                       className="w-12 h-18 md:w-16 md:h-24 object-cover rounded"
                                     />
                                   )}
-                                  <div className="text-left">
+                                  <div className="text-left flex-1">
                                     <div className="font-medium text-base md:text-lg">{season.title}</div>
                                     {season.summary && (
                                       <div className="text-xs md:text-sm text-gray-400 line-clamp-2">
@@ -350,13 +382,24 @@ export const MediaDetail: React.FC = () => {
                                       </div>
                                     )}
                                   </div>
-                                </div>
-                                <div className="flex items-center space-x-2">
                                   <span className="text-gray-400">
                                     {expandedSeasons[season.ratingKey] ? '▼' : '▶'}
                                   </span>
-                                </div>
-                              </button>
+                                </button>
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleSeasonDownload(season.ratingKey, season.title);
+                                  }}
+                                  disabled={isDownloading(api.getSeasonDownloadUrl(season.ratingKey))}
+                                  className="btn-primary ml-2 disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap text-sm md:text-base px-3 md:px-4 py-2"
+                                  title="Download entire season as ZIP"
+                                >
+                                  {isDownloading(api.getSeasonDownloadUrl(season.ratingKey))
+                                    ? `${getDownloadProgress(api.getSeasonDownloadUrl(season.ratingKey))}%`
+                                    : '📦 Season'}
+                                </button>
+                              </div>
 
                               {expandedSeasons[season.ratingKey] && (
                                 <div className="border-t border-dark-50 p-3 md:p-4 space-y-2">
