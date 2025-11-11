@@ -30,16 +30,32 @@ export const DownloadManager: React.FC = () => {
 
           {download.status === 'downloading' && (
             <>
-              <div className="flex items-center justify-between text-xs mb-1">
-                <span className="text-gray-400">Downloading...</span>
-                <span className="text-primary-400 font-semibold">{download.progress}%</span>
-              </div>
-              <div className="w-full h-2 bg-dark-200 rounded-full overflow-hidden">
-                <div
-                  className="h-full bg-gradient-to-r from-primary-500 to-primary-400 transition-all duration-300 ease-out"
-                  style={{ width: `${download.progress}%` }}
-                />
-              </div>
+              {download.isBulkDownload ? (
+                // Indeterminate progress for bulk downloads (no Content-Length)
+                <>
+                  <div className="flex items-center justify-between text-xs mb-1">
+                    <span className="text-gray-400">Creating ZIP archive...</span>
+                    <span className="text-primary-400 font-semibold animate-pulse">●</span>
+                  </div>
+                  <div className="w-full h-2 bg-dark-200 rounded-full overflow-hidden">
+                    <div className="h-full bg-gradient-to-r from-primary-500 to-primary-400 animate-pulse" />
+                  </div>
+                </>
+              ) : (
+                // Percentage-based progress for single file downloads
+                <>
+                  <div className="flex items-center justify-between text-xs mb-1">
+                    <span className="text-gray-400">Downloading...</span>
+                    <span className="text-primary-400 font-semibold">{download.progress}%</span>
+                  </div>
+                  <div className="w-full h-2 bg-dark-200 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-gradient-to-r from-primary-500 to-primary-400 transition-all duration-300 ease-out"
+                      style={{ width: `${download.progress}%` }}
+                    />
+                  </div>
+                </>
+              )}
             </>
           )}
 

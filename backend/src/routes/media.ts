@@ -5,6 +5,8 @@ import { logger } from '../utils/logger';
 import { AuthRequest, createAuthMiddleware } from '../middleware/auth';
 import axios from 'axios';
 import https from 'https';
+import path from 'path';
+import { createZipStream, ZipFileEntry } from '../utils/zipUtils';
 
 // HTTPS agent that bypasses SSL certificate validation for local Plex servers
 // This is necessary when connecting to Plex servers with self-signed certificates
@@ -494,6 +496,320 @@ export const createMediaRouter = (db: DatabaseService) => {
       logger.error('Download failed', { error });
       if (!res.headersSent) {
         return res.status(500).json({ error: 'Download failed' });
+      }
+      return;
+    }
+  });
+
+  // Get season download size info
+  router.get('/season/:seasonRatingKey/size', authMiddleware, async (req: AuthRequest, res) => {
+    try {
+      const { seasonRatingKey } = req.params;
+      const { token, serverUrl, error } = getUserCredentials(req);
+
+      if (error) {
+        return res.status(403).json({ error });
+      }
+
+      if (!token || !serverUrl) {
+        return res.status(401).json({ error: 'Plex token required - configure in settings' });
+      }
+
+      plexService.setServerConnection(serverUrl, token);
+
+      // Get all episodes in the season
+      const episodes = await plexService.getEpisodes(seasonRatingKey, token);
+
+      if (!episodes || episodes.length === 0) {
+        return res.status(404).json({ error: 'No episodes found in this season' });
+      }
+
+      // Calculate total size
+      let totalSize = 0;
+      let fileCount = 0;
+
+      for (const episode of episodes) {
+        if (episode.Media?.[0]?.Part?.[0]) {
+          const part = episode.Media[0].Part[0];
+          totalSize += part.size || 0;
+          fileCount++;
+        }
+      }
+
+      return res.json({
+        totalSize,
+        fileCount,
+        totalSizeGB: (totalSize / 1073741824).toFixed(2)
+      });
+    } catch (error) {
+      logger.error('Failed to get season size', { error });
+      return res.status(500).json({ error: 'Failed to get season size' });
+    }
+  });
+
+  // Get album download size info
+  router.get('/album/:albumRatingKey/size', authMiddleware, async (req: AuthRequest, res) => {
+    try {
+      const { albumRatingKey } = req.params;
+      const { token, serverUrl, error } = getUserCredentials(req);
+
+      if (error) {
+        return res.status(403).json({ error });
+      }
+
+      if (!token || !serverUrl) {
+        return res.status(401).json({ error: 'Plex token required - configure in settings' });
+      }
+
+      plexService.setServerConnection(serverUrl, token);
+
+      // Get all tracks in the album
+      const tracks = await plexService.getTracks(albumRatingKey, token);
+
+      if (!tracks || tracks.length === 0) {
+        return res.status(404).json({ error: 'No tracks found in this album' });
+      }
+
+      // Calculate total size
+      let totalSize = 0;
+      let fileCount = 0;
+
+      for (const track of tracks) {
+        if (track.Media?.[0]?.Part?.[0]) {
+          const part = track.Media[0].Part[0];
+          totalSize += part.size || 0;
+          fileCount++;
+        }
+      }
+
+      return res.json({
+        totalSize,
+        fileCount,
+        totalSizeGB: (totalSize / 1073741824).toFixed(2)
+      });
+    } catch (error) {
+      logger.error('Failed to get album size', { error });
+      return res.status(500).json({ error: 'Failed to get album size' });
+    }
+  });
+
+  // Download entire season as zip
+  router.get('/season/:seasonRatingKey/download', authMiddleware, async (req: AuthRequest, res) => {
+    try {
+      const { seasonRatingKey } = req.params;
+
+      const { token, serverUrl, error } = getUserCredentials(req);
+
+      if (error) {
+        return res.status(403).json({ error });
+      }
+
+      if (!token || !serverUrl) {
+        return res.status(401).json({ error: 'Plex token required - configure in settings' });
+      }
+
+      plexService.setServerConnection(serverUrl, token);
+
+      // Get season metadata
+      const seasonMetadata = await plexService.getMediaMetadata(seasonRatingKey, token);
+
+      // Get all episodes in the season
+      const episodes = await plexService.getEpisodes(seasonRatingKey, token);
+
+      if (!episodes || episodes.length === 0) {
+        return res.status(404).json({ error: 'No episodes found in this season' });
+      }
+
+      // Check download permissions for each episode
+      // Admin users bypass permission checks
+      const isAdmin = req.user?.isAdmin;
+      if (!isAdmin) {
+        for (const episode of episodes) {
+          const isExplicitlyDisabled = episode.allowSync === false ||
+                                       episode.allowSync === 0 ||
+                                       episode.allowSync === '0';
+          if (isExplicitlyDisabled) {
+            logger.warn('Season download denied: user lacks download permission for at least one episode', {
+              userId: req.user?.id,
+              seasonRatingKey,
+              episodeRatingKey: episode.ratingKey,
+              episodeTitle: episode.title
+            });
+            return res.status(403).json({
+              error: 'Download not allowed. Some episodes in this season are not available for download.'
+            });
+          }
+        }
+      }
+
+      // Prepare files for zipping
+      const files: ZipFileEntry[] = [];
+      let totalSize = 0;
+
+      for (const episode of episodes) {
+        if (episode.Media?.[0]?.Part?.[0]) {
+          const part = episode.Media[0].Part[0];
+          const downloadUrl = plexService.getDownloadUrl(part.key, token);
+          // Use path.basename to ensure we only get the filename, not the full path
+          const filename = path.basename(part.file) || `Episode_${episode.index}.${part.container}`;
+          const size = part.size || 0;
+
+          files.push({
+            url: downloadUrl,
+            filename,
+            size
+          });
+
+          totalSize += size;
+        }
+      }
+
+      // Warn if total size is over 10GB (10737418240 bytes)
+      const tenGB = 10737418240;
+      if (totalSize > tenGB) {
+        logger.warn('Large season download initiated', {
+          userId: req.user?.id,
+          seasonRatingKey,
+          totalSizeGB: (totalSize / 1073741824).toFixed(2),
+          episodeCount: files.length
+        });
+      }
+
+      // Generate zip filename: "ShowName - SXX.zip"
+      const showName = seasonMetadata.grandparentTitle || 'Unknown Show';
+      const seasonNumber = seasonMetadata.index || seasonMetadata.parentIndex || 0;
+      const zipFilename = `${showName} - S${String(seasonNumber).padStart(2, '0')}.zip`;
+
+      // Log the download
+      const libraryTitle = seasonMetadata.librarySectionTitle || 'Unknown Library';
+      const downloadTitle = `${libraryTitle} - ${showName} - ${seasonMetadata.title} (${files.length} episodes)`;
+      db.logDownload(
+        req.user!.id,
+        downloadTitle,
+        seasonRatingKey,
+        totalSize
+      );
+
+      logger.info(`Season download started: ${downloadTitle} by user ${req.user?.username}`);
+
+      // Stream zip to client
+      await createZipStream(res, files, zipFilename);
+
+      return;
+    } catch (error) {
+      logger.error('Season download failed', { error });
+      if (!res.headersSent) {
+        return res.status(500).json({ error: 'Season download failed' });
+      }
+      return;
+    }
+  });
+
+  // Download entire album as zip
+  router.get('/album/:albumRatingKey/download', authMiddleware, async (req: AuthRequest, res) => {
+    try {
+      const { albumRatingKey } = req.params;
+
+      const { token, serverUrl, error } = getUserCredentials(req);
+
+      if (error) {
+        return res.status(403).json({ error });
+      }
+
+      if (!token || !serverUrl) {
+        return res.status(401).json({ error: 'Plex token required - configure in settings' });
+      }
+
+      plexService.setServerConnection(serverUrl, token);
+
+      // Get album metadata
+      const albumMetadata = await plexService.getMediaMetadata(albumRatingKey, token);
+
+      // Get all tracks in the album
+      const tracks = await plexService.getTracks(albumRatingKey, token);
+
+      if (!tracks || tracks.length === 0) {
+        return res.status(404).json({ error: 'No tracks found in this album' });
+      }
+
+      // Check download permissions for each track
+      // Admin users bypass permission checks
+      const isAdmin = req.user?.isAdmin;
+      if (!isAdmin) {
+        for (const track of tracks) {
+          const isExplicitlyDisabled = track.allowSync === false ||
+                                       track.allowSync === 0 ||
+                                       track.allowSync === '0';
+          if (isExplicitlyDisabled) {
+            logger.warn('Album download denied: user lacks download permission for at least one track', {
+              userId: req.user?.id,
+              albumRatingKey,
+              trackRatingKey: track.ratingKey,
+              trackTitle: track.title
+            });
+            return res.status(403).json({
+              error: 'Download not allowed. Some tracks in this album are not available for download.'
+            });
+          }
+        }
+      }
+
+      // Prepare files for zipping
+      const files: ZipFileEntry[] = [];
+      let totalSize = 0;
+
+      for (const track of tracks) {
+        if (track.Media?.[0]?.Part?.[0]) {
+          const part = track.Media[0].Part[0];
+          const downloadUrl = plexService.getDownloadUrl(part.key, token);
+          // Use path.basename to ensure we only get the filename, not the full path
+          const filename = path.basename(part.file) || `Track_${track.index}.${part.container}`;
+          const size = part.size || 0;
+
+          files.push({
+            url: downloadUrl,
+            filename,
+            size
+          });
+
+          totalSize += size;
+        }
+      }
+
+      // Warn if total size is over 10GB (10737418240 bytes)
+      const tenGB = 10737418240;
+      if (totalSize > tenGB) {
+        logger.warn('Large album download initiated', {
+          userId: req.user?.id,
+          albumRatingKey,
+          totalSizeGB: (totalSize / 1073741824).toFixed(2),
+          trackCount: files.length
+        });
+      }
+
+      // Generate zip filename: "Album.zip"
+      const zipFilename = `${albumMetadata.title}.zip`;
+
+      // Log the download
+      const libraryTitle = albumMetadata.librarySectionTitle || 'Unknown Library';
+      const downloadTitle = `${libraryTitle} - ${albumMetadata.title} (${files.length} tracks)`;
+      db.logDownload(
+        req.user!.id,
+        downloadTitle,
+        albumRatingKey,
+        totalSize
+      );
+
+      logger.info(`Album download started: ${downloadTitle} by user ${req.user?.username}`);
+
+      // Stream zip to client
+      await createZipStream(res, files, zipFilename);
+
+      return;
+    } catch (error) {
+      logger.error('Album download failed', { error });
+      if (!res.headersSent) {
+        return res.status(500).json({ error: 'Album download failed' });
       }
       return;
     }
