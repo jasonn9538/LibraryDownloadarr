@@ -280,7 +280,7 @@ export const MediaDetail: React.FC = () => {
                           title="Download entire album as ZIP"
                         >
                           {isDownloading(api.getAlbumDownloadUrl(ratingKey!))
-                            ? `${getDownloadProgress(api.getAlbumDownloadUrl(ratingKey!))}%`
+                            ? '⏳ Zipping...'
                             : '📦 Download Album'}
                         </button>
                       )}
@@ -446,7 +446,7 @@ export const MediaDetail: React.FC = () => {
                                   title="Download entire season as ZIP"
                                 >
                                   {isDownloading(api.getSeasonDownloadUrl(season.ratingKey))
-                                    ? `${getDownloadProgress(api.getSeasonDownloadUrl(season.ratingKey))}%`
+                                    ? '⏳ Zipping...'
                                     : '📦 Season'}
                                 </button>
                               </div>

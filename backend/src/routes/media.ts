@@ -4,6 +4,7 @@ import { plexService } from '../services/plexService';
 import { logger } from '../utils/logger';
 import { AuthRequest, createAuthMiddleware } from '../middleware/auth';
 import axios from 'axios';
+import path from 'path';
 import { createZipStream, ZipFileEntry } from '../utils/zipUtils';
 
 export const createMediaRouter = (db: DatabaseService) => {
@@ -640,7 +641,8 @@ export const createMediaRouter = (db: DatabaseService) => {
         if (episode.Media?.[0]?.Part?.[0]) {
           const part = episode.Media[0].Part[0];
           const downloadUrl = plexService.getDownloadUrl(part.key, token);
-          const filename = part.file.split('/').pop() || `Episode_${episode.index}.${part.container}`;
+          // Use path.basename to ensure we only get the filename, not the full path
+          const filename = path.basename(part.file) || `Episode_${episode.index}.${part.container}`;
           const size = part.size || 0;
 
           files.push({
@@ -751,7 +753,8 @@ export const createMediaRouter = (db: DatabaseService) => {
         if (track.Media?.[0]?.Part?.[0]) {
           const part = track.Media[0].Part[0];
           const downloadUrl = plexService.getDownloadUrl(part.key, token);
-          const filename = part.file.split('/').pop() || `Track_${track.index}.${part.container}`;
+          // Use path.basename to ensure we only get the filename, not the full path
+          const filename = path.basename(part.file) || `Track_${track.index}.${part.container}`;
           const size = part.size || 0;
 
           files.push({

@@ -10,6 +10,7 @@ interface Download {
   progress: number;
   status: 'downloading' | 'completed' | 'error';
   error?: string;
+  isBulkDownload?: boolean; // True for season/album zips (no progress tracking)
 }
 
 interface DownloadContextType {
@@ -62,6 +63,9 @@ export const DownloadProvider: React.FC<DownloadProviderProps> = ({ children }) 
   ): Promise<void> => {
     const downloadId = `${ratingKey}-${partKey}-${Date.now()}`;
 
+    // Check if this is a bulk download (season or album ZIP)
+    const isBulkDownload = partKey.includes('/season/') || partKey.includes('/album/');
+
     // Add download to state
     const newDownload: Download = {
       id: downloadId,
@@ -71,6 +75,7 @@ export const DownloadProvider: React.FC<DownloadProviderProps> = ({ children }) 
       title,
       progress: 0,
       status: 'downloading',
+      isBulkDownload,
     };
 
     setDownloads((prev) => [...prev, newDownload]);
@@ -120,15 +125,18 @@ export const DownloadProvider: React.FC<DownloadProviderProps> = ({ children }) 
         chunks.push(value);
         receivedLength += value.length;
 
-        // Update progress
-        const progress = total > 0 ? Math.round((receivedLength / total) * 100) : 0;
-        setDownloads((prev) =>
-          prev.map((d) =>
-            d.id === downloadId
-              ? { ...d, progress }
-              : d
-          )
-        );
+        // Update progress - only for non-bulk downloads with known size
+        // Bulk downloads (zips) don't have Content-Length, so we can't track progress
+        if (!isBulkDownload && total > 0) {
+          const progress = Math.round((receivedLength / total) * 100);
+          setDownloads((prev) =>
+            prev.map((d) =>
+              d.id === downloadId
+                ? { ...d, progress }
+                : d
+            )
+          );
+        }
       }
 
       // Create blob and download
