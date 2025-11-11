@@ -1,4 +1,5 @@
 import axios from 'axios';
+import https from 'https';
 import { parseString } from 'xml2js';
 import { logger } from '../utils/logger';
 import { config } from '../config';
@@ -84,9 +85,23 @@ export interface PlexAuthResponse {
 
 export class PlexService {
   private plexUrl: string | null = null;
+  // HTTPS agent that bypasses SSL certificate validation for local Plex servers
+  // This is necessary when connecting to Plex servers with self-signed certificates
+  // or when using local IPs with plex.direct certificates
+  private httpsAgent = new https.Agent({
+    rejectUnauthorized: false
+  });
 
   constructor() {
     // Plex configuration is now set via setServerConnection() when admin configures settings
+  }
+
+  // Helper to get axios config with HTTPS agent for Plex server requests
+  private getAxiosConfig(headers?: any): any {
+    return {
+      headers,
+      httpsAgent: this.httpsAgent
+    };
   }
 
   private parseConnectionDetails(urlOrHostname: string): { hostname: string; port: number; https: boolean } {
@@ -147,7 +162,7 @@ export class PlexService {
     }
 
     try {
-      await axios.get(`${this.plexUrl}/`);
+      await axios.get(`${this.plexUrl}/`, this.getAxiosConfig());
       return true;
     } catch (error) {
       logger.error('Failed to connect to Plex server', { error });
@@ -161,11 +176,9 @@ export class PlexService {
       const protocol = connectionDetails.https ? 'https' : 'http';
       const url = `${protocol}://${connectionDetails.hostname}:${connectionDetails.port}`;
 
-      await axios.get(`${url}/`, {
-        headers: {
-          'X-Plex-Token': token,
-        },
-      });
+      await axios.get(`${url}/`, this.getAxiosConfig({
+        'X-Plex-Token': token,
+      }));
       return true;
     } catch (error) {
       logger.error('Failed to test connection with provided credentials', { error });
@@ -417,12 +430,10 @@ export class PlexService {
         return null;
       }
 
-      const identityResponse = await axios.get(`${url}/identity`, {
-        headers: {
-          'X-Plex-Token': token,
-          'Accept': 'application/json',
-        },
-      });
+      const identityResponse = await axios.get(`${url}/identity`, this.getAxiosConfig({
+        'X-Plex-Token': token,
+        'Accept': 'application/json',
+      }));
 
       const identityData = identityResponse.data?.MediaContainer;
       const machineIdentifier = identityData?.machineIdentifier;
@@ -432,12 +443,10 @@ export class PlexService {
         return null;
       }
 
-      const rootResponse = await axios.get(`${url}/`, {
-        headers: {
-          'X-Plex-Token': token,
-          'Accept': 'application/json',
-        },
-      });
+      const rootResponse = await axios.get(`${url}/`, this.getAxiosConfig({
+        'X-Plex-Token': token,
+        'Accept': 'application/json',
+      }));
 
       const rootData = rootResponse.data?.MediaContainer;
 
@@ -475,12 +484,10 @@ export class PlexService {
         throw new Error(`Plex URL and token are required. Please configure in Settings. (url: ${!!url}, token: ${!!token})`);
       }
 
-      const response = await axios.get(`${url}/library/sections`, {
-        headers: {
-          'X-Plex-Token': token,
-          'Accept': 'application/json',
-        },
-      });
+      const response = await axios.get(`${url}/library/sections`, this.getAxiosConfig({
+        'X-Plex-Token': token,
+        'Accept': 'application/json',
+      }));
 
       if (!response.data?.MediaContainer?.Directory) {
         return [];
@@ -513,12 +520,10 @@ export class PlexService {
         endpoint = `/library/sections/${libraryKey}/albums`;
       }
 
-      const response = await axios.get(`${this.plexUrl}${endpoint}`, {
-        headers: {
-          'X-Plex-Token': userToken || '',
-          'Accept': 'application/json',
-        },
-      });
+      const response = await axios.get(`${this.plexUrl}${endpoint}`, this.getAxiosConfig({
+        'X-Plex-Token': userToken || '',
+        'Accept': 'application/json',
+      }));
 
       return response.data?.MediaContainer?.Metadata || [];
     } catch (error) {
@@ -533,12 +538,10 @@ export class PlexService {
     }
 
     try {
-      const response = await axios.get(`${this.plexUrl}/library/metadata/${ratingKey}`, {
-        headers: {
-          'X-Plex-Token': userToken || '',
-          'Accept': 'application/json',
-        },
-      });
+      const response = await axios.get(`${this.plexUrl}/library/metadata/${ratingKey}`, this.getAxiosConfig({
+        'X-Plex-Token': userToken || '',
+        'Accept': 'application/json',
+      }));
 
       return response.data?.MediaContainer?.Metadata?.[0];
     } catch (error) {
@@ -553,12 +556,10 @@ export class PlexService {
     }
 
     try {
-      const response = await axios.get(`${this.plexUrl}/library/metadata/${showRatingKey}/children`, {
-        headers: {
-          'X-Plex-Token': userToken || '',
-          'Accept': 'application/json',
-        },
-      });
+      const response = await axios.get(`${this.plexUrl}/library/metadata/${showRatingKey}/children`, this.getAxiosConfig({
+        'X-Plex-Token': userToken || '',
+        'Accept': 'application/json',
+      }));
 
       return response.data?.MediaContainer?.Metadata || [];
     } catch (error) {
@@ -573,12 +574,10 @@ export class PlexService {
     }
 
     try {
-      const response = await axios.get(`${this.plexUrl}/library/metadata/${seasonRatingKey}/children`, {
-        headers: {
-          'X-Plex-Token': userToken || '',
-          'Accept': 'application/json',
-        },
-      });
+      const response = await axios.get(`${this.plexUrl}/library/metadata/${seasonRatingKey}/children`, this.getAxiosConfig({
+        'X-Plex-Token': userToken || '',
+        'Accept': 'application/json',
+      }));
 
       return response.data?.MediaContainer?.Metadata || [];
     } catch (error) {
@@ -593,12 +592,10 @@ export class PlexService {
     }
 
     try {
-      const response = await axios.get(`${this.plexUrl}/library/metadata/${albumRatingKey}/children`, {
-        headers: {
-          'X-Plex-Token': userToken || '',
-          'Accept': 'application/json',
-        },
-      });
+      const response = await axios.get(`${this.plexUrl}/library/metadata/${albumRatingKey}/children`, this.getAxiosConfig({
+        'X-Plex-Token': userToken || '',
+        'Accept': 'application/json',
+      }));
 
       return response.data?.MediaContainer?.Metadata || [];
     } catch (error) {
@@ -615,13 +612,13 @@ export class PlexService {
     try {
       logger.debug('Executing Plex search query', { query, endpoint: '/search' });
 
-      const response = await axios.get(`${this.plexUrl}/search`, {
-        params: { query },
-        headers: {
-          'X-Plex-Token': userToken || '',
-          'Accept': 'application/json',
-        },
+      const config = this.getAxiosConfig({
+        'X-Plex-Token': userToken || '',
+        'Accept': 'application/json',
       });
+      config.params = { query };
+
+      const response = await axios.get(`${this.plexUrl}/search`, config);
 
       logger.debug('Search query completed', {
         hasResults: !!response.data?.MediaContainer?.Metadata,
@@ -657,16 +654,16 @@ export class PlexService {
 
       for (const library of libraries) {
         try {
-          const response = await axios.get(`${this.plexUrl}/library/sections/${library.key}/recentlyAdded`, {
-            params: {
-              'X-Plex-Container-Start': 0,
-              'X-Plex-Container-Size': itemsPerLibrary,
-            },
-            headers: {
-              'X-Plex-Token': userToken || '',
-              'Accept': 'application/json',
-            },
+          const config = this.getAxiosConfig({
+            'X-Plex-Token': userToken || '',
+            'Accept': 'application/json',
           });
+          config.params = {
+            'X-Plex-Container-Start': 0,
+            'X-Plex-Container-Size': itemsPerLibrary,
+          };
+
+          const response = await axios.get(`${this.plexUrl}/library/sections/${library.key}/recentlyAdded`, config);
 
           const metadata = response.data?.MediaContainer?.Metadata || [];
           logger.debug(`Library ${library.title} recently added`, {
