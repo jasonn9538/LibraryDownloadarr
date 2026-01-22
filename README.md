@@ -21,6 +21,9 @@ LibraryDownloadarr is a modern, self-hosted web application that provides a beau
 - 🔍 **Smart Search** - Search across all accessible libraries with relevance-based results
 - 📊 **Admin Dashboard** - Download history, logs, and settings management
 - 🚀 **Easy Setup** - Initial setup wizard with guided configuration
+- 🎥 **Resolution Selection** - Choose download quality or transcode to lower resolutions
+- ⚙️ **Transcode Queue** - Queue transcodes and download when ready (files kept for 1 week)
+- 📦 **Bulk Downloads** - Download entire seasons or albums as ZIP files
 
 ---
 
@@ -80,9 +83,13 @@ services:
       - LOG_LEVEL=info
       - DATABASE_PATH=/app/data/librarydownloadarr.db
       - TZ=America/New_York  # Change to your timezone
+      # Transcoding configuration
+      - TRANSCODE_DIR=/app/transcode
+      - MAX_CONCURRENT_TRANSCODES=2
     volumes:
-      - ./data:/app/data      # Database and application data
-      - ./logs:/app/logs      # Application logs
+      - ./data:/app/data           # Database and application data
+      - ./logs:/app/logs           # Application logs
+      - ./transcode:/app/transcode # Transcoded files (use fast storage for best performance)
     networks:
       - librarydownloadarr
 
@@ -112,8 +119,11 @@ docker run -d \
   -e LOG_LEVEL=info \
   -e DATABASE_PATH=/app/data/librarydownloadarr.db \
   -e TZ=America/New_York \
+  -e TRANSCODE_DIR=/app/transcode \
+  -e MAX_CONCURRENT_TRANSCODES=2 \
   -v $(pwd)/data:/app/data \
   -v $(pwd)/logs:/app/logs \
+  -v $(pwd)/transcode:/app/transcode \
   ghcr.io/kikootwo/librarydownloadarr:latest
 ```
 
@@ -140,6 +150,8 @@ Customize your deployment with environment variables:
 | `LOG_LEVEL` | Logging verbosity | `info` | `debug`, `warn`, `error` |
 | `DATABASE_PATH` | SQLite database location | `/app/data/librarydownloadarr.db` | `/data/db.sqlite` |
 | `TZ` | Timezone for logs and dates | `America/New_York` | `Europe/London`, `Asia/Tokyo` |
+| `TRANSCODE_DIR` | Directory for transcoded files | `/app/transcode` | `/mnt/fast-storage/transcode` |
+| `MAX_CONCURRENT_TRANSCODES` | Max simultaneous transcodes | `2` | `1`, `4` |
 
 ### Initial Setup
 
@@ -233,8 +245,33 @@ LibraryDownloadarr uses a dual authentication system:
 1. **User browses libraries** available to their Plex account
 2. **Search or browse** for desired media
 3. **Click download** on a movie, episode, or track
-4. **File streams through LibraryDownloadarr** to the user's browser
-5. **Download recorded** in history (visible to admins)
+4. **Choose resolution** - original quality or transcode to a lower resolution
+5. **File downloads** directly to browser (original) or queued for transcoding
+6. **Download recorded** in history (visible to admins)
+
+### Transcode Queue System
+
+LibraryDownloadarr includes a powerful transcode queue for downloading media at different resolutions:
+
+**How it works:**
+1. **Select a resolution** when downloading video content (e.g., 720p, 480p)
+2. **Non-original resolutions** are queued for transcoding using ffmpeg
+3. **Navigate to the Transcodes page** to monitor progress
+4. **Download when ready** - completed files are available for 1 week
+5. **Queue is shared** - if another user already transcoded the same file at the same resolution, you can download it immediately
+
+**Features:**
+- 📊 **Real-time progress** - Watch transcoding progress in the UI
+- ⏱️ **1-week retention** - Completed transcodes are kept for 7 days
+- 👥 **Shared transcodes** - See and download transcodes from other users
+- 🔄 **Queue management** - Cancel pending or in-progress transcodes
+- 📱 **H.264 output** - Maximum compatibility with all devices (Main profile, Level 4.0)
+
+**Transcode Settings:**
+- Video: H.264 (libx264), CRF 23, fast preset
+- Audio: AAC, 128kbps stereo
+- Container: MP4 with faststart for web streaming
+- Max 2 concurrent transcodes by default (configurable)
 
 ### Data Storage
 
@@ -244,17 +281,20 @@ LibraryDownloadarr uses a dual authentication system:
 
 ### System Requirements
 
-**Minimal:**
+**Minimal (downloads only):**
 - CPU: 1 core
 - RAM: 512 MB
 - Storage: 100 MB (plus space for logs and database)
 - Network: Access to Plex server
 
-**Recommended:**
-- CPU: 2+ cores (for concurrent downloads)
-- RAM: 1 GB
-- Storage: 1 GB
+**Recommended (with transcoding):**
+- CPU: 4+ cores (transcoding is CPU-intensive)
+- RAM: 2 GB
+- Storage: 50+ GB for transcode cache (files kept for 1 week)
 - Network: Good bandwidth between LibraryDownloadarr and Plex server
+- Fast storage (SSD) for transcode directory improves performance
+
+**Note:** ffmpeg is included in the Docker image. No additional installation required.
 
 ---
 
@@ -389,6 +429,27 @@ npm run dev
 3. Ensure Docker has enough resources (RAM, CPU)
 4. Try pulling latest image: `docker-compose pull`
 5. Clean rebuild: `docker-compose down && docker-compose up -d --build`
+
+### Transcode stuck at 0% or not progressing
+
+**Symptoms**: Transcode job shows 0% and never updates
+
+**Solutions**:
+1. Check container logs for ffmpeg errors: `docker logs librarydownloadarr | grep -i ffmpeg`
+2. Verify the transcode directory is writable: `docker exec librarydownloadarr ls -la /app/transcode`
+3. Ensure enough disk space for transcoded files
+4. Check if ffmpeg is running: `docker exec librarydownloadarr ps aux | grep ffmpeg`
+5. For large files, transcoding can take time - check CPU usage to confirm it's working
+
+### Transcode files not appearing / download fails
+
+**Symptoms**: Completed transcode can't be downloaded
+
+**Solutions**:
+1. Verify transcode directory is properly mounted in docker-compose.yml
+2. Check file permissions on the transcode volume
+3. Ensure the transcode hasn't expired (files are deleted after 1 week)
+4. Check logs for any error messages during transcode completion
 
 ---
 
