@@ -188,10 +188,10 @@ export const Transcodes: React.FC = () => {
   );
 
   return (
-    <div className="flex h-screen overflow-hidden bg-dark">
-      <Sidebar isOpen={isMobileMenuOpen} onClose={closeMobileMenu} />
-      <div className="flex flex-col flex-1 overflow-hidden">
-        <Header onMenuClick={toggleMobileMenu} />
+    <div className="min-h-screen flex flex-col">
+      <Header onMenuClick={toggleMobileMenu} />
+      <div className="flex flex-1 overflow-hidden">
+        <Sidebar isOpen={isMobileMenuOpen} onClose={closeMobileMenu} />
         <main className="flex-1 p-4 md:p-8 overflow-y-auto">
           <div className="max-w-4xl mx-auto">
             <h2 className="text-2xl md:text-3xl font-bold mb-2">Transcodes</h2>
