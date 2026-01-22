@@ -440,17 +440,28 @@ export class DatabaseService {
   }
 
   getUserTranscodeJobs(userId: string): TranscodeJob[] {
+    // First, get the username for this user (handles both admin and plex users)
+    const userQuery = this.db.prepare(`
+      SELECT username FROM admin_users WHERE id = ?
+      UNION
+      SELECT username FROM plex_users WHERE id = ?
+    `);
+    const userResult = userQuery.get(userId, userId) as { username: string } | undefined;
+    const username = userResult?.username;
+
+    // Get transcodes for this user OR any user with the same username
+    // This handles cases where the same person logs in with different Plex managed users
     const stmt = this.db.prepare(`
       SELECT tj.*,
              COALESCE(au.username, pu.username) as username
       FROM transcode_jobs tj
       LEFT JOIN admin_users au ON tj.user_id = au.id
       LEFT JOIN plex_users pu ON tj.user_id = pu.id
-      WHERE tj.user_id = ?
+      WHERE (tj.user_id = ? OR COALESCE(au.username, pu.username) = ?)
         AND (tj.expires_at IS NULL OR tj.expires_at > ? OR tj.status NOT IN ('completed', 'error', 'cancelled'))
       ORDER BY tj.created_at DESC
     `);
-    const rows = stmt.all(userId, Date.now()) as any[];
+    const rows = stmt.all(userId, username || '', Date.now()) as any[];
     return rows.map(row => this.mapTranscodeJob(row));
   }
 
