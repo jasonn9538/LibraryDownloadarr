@@ -117,8 +117,21 @@ export const MediaDetail: React.FC = () => {
   ) => {
     setResolutionSelectorOpen(null);
 
-    // For non-original resolutions, queue for transcoding instead of downloading directly
+    // For non-original resolutions, check if a transcode is already available
     if (!resolution.isOriginal) {
+      // If transcode is already completed, navigate to Transcodes page to download
+      if (resolution.transcodeStatus === 'completed' && resolution.transcodeJobId) {
+        navigate('/transcodes');
+        return;
+      }
+
+      // If already pending or transcoding, just navigate to see status
+      if (resolution.transcodeStatus === 'pending' || resolution.transcodeStatus === 'transcoding') {
+        navigate('/transcodes');
+        return;
+      }
+
+      // Otherwise, queue a new transcode
       try {
         await api.queueTranscode(itemRatingKey, resolution.id);
         setTranscodeQueued(itemTitle);

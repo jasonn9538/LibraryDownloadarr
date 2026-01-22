@@ -83,6 +83,18 @@ export const createTranscodesRouter = (db: DatabaseService) => {
     }
   });
 
+  // Get available transcodes for a specific media item
+  router.get('/media/:ratingKey', authMiddleware, async (req: AuthRequest, res) => {
+    try {
+      const { ratingKey } = req.params;
+      const jobs = db.getAvailableTranscodesForMedia(ratingKey);
+      return res.json({ jobs });
+    } catch (error) {
+      logger.error('Failed to get transcodes for media', { error });
+      return res.status(500).json({ error: 'Failed to get transcodes for media' });
+    }
+  });
+
   // Get a specific job
   router.get('/:jobId', authMiddleware, async (req: AuthRequest, res) => {
     try {

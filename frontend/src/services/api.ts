@@ -286,6 +286,11 @@ class ApiClient {
     return response.data.job;
   }
 
+  async getTranscodesForMedia(ratingKey: string): Promise<TranscodeJob[]> {
+    const response = await this.client.get<{ jobs: TranscodeJob[] }>(`/transcodes/media/${ratingKey}`);
+    return response.data.jobs;
+  }
+
   async queueTranscode(ratingKey: string, resolutionId: string): Promise<TranscodeJob> {
     const response = await this.client.post<{ job: TranscodeJob }>('/transcodes', {
       ratingKey,

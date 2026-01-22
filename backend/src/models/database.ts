@@ -492,6 +492,23 @@ export class DatabaseService {
     return rows.map(row => this.mapTranscodeJob(row));
   }
 
+  getAvailableTranscodesForMedia(ratingKey: string): TranscodeJob[] {
+    // Get all available transcodes (pending, transcoding, completed) for a specific media item
+    const stmt = this.db.prepare(`
+      SELECT tj.*,
+             COALESCE(au.username, pu.username) as username
+      FROM transcode_jobs tj
+      LEFT JOIN admin_users au ON tj.user_id = au.id
+      LEFT JOIN plex_users pu ON tj.user_id = pu.id
+      WHERE tj.rating_key = ?
+        AND tj.status IN ('pending', 'transcoding', 'completed')
+        AND (tj.expires_at IS NULL OR tj.expires_at > ? OR tj.status NOT IN ('completed'))
+      ORDER BY tj.created_at DESC
+    `);
+    const rows = stmt.all(ratingKey, Date.now()) as any[];
+    return rows.map(row => this.mapTranscodeJob(row));
+  }
+
   getPendingTranscodeJobs(limit: number = 10): TranscodeJob[] {
     const stmt = this.db.prepare(`
       SELECT tj.*,
