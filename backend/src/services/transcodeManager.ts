@@ -419,7 +419,7 @@ class TranscodeManager {
         const output = data.toString();
 
         // Parse time= from ffmpeg output
-        const timeMatch = output.match(/time=(\\d+):(\\d+):(\\d+\\.\\d+)/);
+        const timeMatch = output.match(/time=(\d+):(\d+):(\d+\.\d+)/);
         if (timeMatch && durationSeconds > 0) {
           const hours = parseInt(timeMatch[1]);
           const minutes = parseInt(timeMatch[2]);
