@@ -547,9 +547,10 @@ export const createMediaRouter = (db: DatabaseService) => {
         ...availableResolutions.map(r => ({
           ...r,
           isOriginal: false,
-          // Estimate file size based on bitrate and duration
+          // Estimate file size based on video + audio bitrate and duration
+          // Audio is typically ~128-192kbps for AAC, using 160kbps as estimate
           estimatedSize: sourceMedia.duration
-            ? Math.round((r.maxVideoBitrate * 1000 * (sourceMedia.duration / 1000)) / 8)
+            ? Math.round(((r.maxVideoBitrate + 160) * 1000 * (sourceMedia.duration / 1000)) / 8)
             : undefined,
         })),
       ];
