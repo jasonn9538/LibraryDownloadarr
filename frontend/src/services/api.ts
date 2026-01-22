@@ -158,7 +158,8 @@ class ApiClient {
   }
 
   getDownloadUrl(ratingKey: string, partKey: string): string {
-    return `/api/media/${ratingKey}/download?partKey=${encodeURIComponent(partKey)}`;
+    const token = localStorage.getItem('token');
+    return `/api/media/${ratingKey}/download?partKey=${encodeURIComponent(partKey)}&token=${token}`;
   }
 
   // Get available resolution options for a media item
@@ -215,11 +216,13 @@ class ApiClient {
   }
 
   getSeasonDownloadUrl(seasonRatingKey: string): string {
-    return `/api/media/season/${seasonRatingKey}/download`;
+    const token = localStorage.getItem('token');
+    return `/api/media/season/${seasonRatingKey}/download?token=${token}`;
   }
 
   getAlbumDownloadUrl(albumRatingKey: string): string {
-    return `/api/media/album/${albumRatingKey}/download`;
+    const token = localStorage.getItem('token');
+    return `/api/media/album/${albumRatingKey}/download?token=${token}`;
   }
 
   getThumbnailUrl(ratingKey: string, path: string): string {

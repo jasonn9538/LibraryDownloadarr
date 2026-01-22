@@ -11,7 +11,7 @@ import { ResolutionSelector, ResolutionOption } from '../components/ResolutionSe
 export const MediaDetail: React.FC = () => {
   const { ratingKey } = useParams<{ ratingKey: string }>();
   const navigate = useNavigate();
-  const { startDownload, downloads } = useDownloads();
+  const { startDownload } = useDownloads();
   const { isMobileMenuOpen, toggleMobileMenu, closeMobileMenu } = useMobileMenu();
   const [media, setMedia] = useState<MediaItem | null>(null);
   const [seasons, setSeasons] = useState<MediaItem[]>([]);
@@ -85,17 +85,6 @@ export const MediaDetail: React.FC = () => {
         console.error('Failed to load episodes:', err);
       }
     }
-  };
-
-  // Helper function to check if a download is in progress for a given part
-  const isDownloading = (partKey: string): boolean => {
-    return downloads.some(d => d.partKey === partKey && d.status === 'downloading');
-  };
-
-  // Helper function to get download progress for a given part
-  const getDownloadProgress = (partKey: string): number => {
-    const download = downloads.find(d => d.partKey === partKey);
-    return download?.progress || 0;
   };
 
   // Helper to get or create a ref for a download button
@@ -371,13 +360,10 @@ export const MediaDetail: React.FC = () => {
                       {media.type === 'album' && tracks.length > 0 && (
                         <button
                           onClick={() => handleAlbumDownload(ratingKey!, media.title)}
-                          disabled={isDownloading(api.getAlbumDownloadUrl(ratingKey!))}
-                          className="btn-primary disabled:opacity-50 disabled:cursor-not-allowed"
+                          className="btn-primary"
                           title="Download entire album as ZIP"
                         >
-                          {isDownloading(api.getAlbumDownloadUrl(ratingKey!))
-                            ? '⏳ Zipping...'
-                            : '📦 Download Album'}
+                          📦 Download Album
                         </button>
                       )}
                     </div>
@@ -417,21 +403,10 @@ export const MediaDetail: React.FC = () => {
                                         track.Media![0].Part[0].size
                                       )
                                     }
-                                    disabled={isDownloading(track.Media![0].Part[0].key)}
-                                    className="btn-primary disabled:opacity-50 disabled:cursor-not-allowed"
+                                    className="btn-primary"
                                   >
-                                    {isDownloading(track.Media![0].Part[0].key)
-                                      ? `${getDownloadProgress(track.Media![0].Part[0].key)}%`
-                                      : 'Download'}
+                                    Download
                                   </button>
-                                  {isDownloading(track.Media![0].Part[0].key) && (
-                                    <div className="w-32 h-2 bg-dark-200 rounded-full overflow-hidden">
-                                      <div
-                                        className="h-full bg-gradient-to-r from-primary-500 to-primary-400 transition-all duration-300 ease-out"
-                                        style={{ width: `${getDownloadProgress(track.Media![0].Part[0].key)}%` }}
-                                      />
-                                    </div>
-                                  )}
                                 </div>
                               )}
                             </div>
@@ -475,28 +450,13 @@ export const MediaDetail: React.FC = () => {
                                     <button
                                       ref={buttonRef}
                                       onClick={() => openResolutionSelector(buttonKey)}
-                                      disabled={isDownloading(episode.Media![0].Part[0].key)}
-                                      className="btn-primary disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+                                      className="btn-primary flex items-center gap-1"
                                     >
-                                      {isDownloading(episode.Media![0].Part[0].key) ? (
-                                        `${getDownloadProgress(episode.Media![0].Part[0].key)}%`
-                                      ) : (
-                                        <>
-                                          Download
-                                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                                          </svg>
-                                        </>
-                                      )}
+                                      Download
+                                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                                      </svg>
                                     </button>
-                                    {isDownloading(episode.Media![0].Part[0].key) && (
-                                      <div className="w-32 h-2 bg-dark-200 rounded-full overflow-hidden">
-                                        <div
-                                          className="h-full bg-gradient-to-r from-primary-500 to-primary-400 transition-all duration-300 ease-out"
-                                          style={{ width: `${getDownloadProgress(episode.Media![0].Part[0].key)}%` }}
-                                        />
-                                      </div>
-                                    )}
                                     {resolutionSelectorOpen === buttonKey && (
                                       <ResolutionSelector
                                         ratingKey={episode.ratingKey}
@@ -559,13 +519,10 @@ export const MediaDetail: React.FC = () => {
                                     e.stopPropagation();
                                     handleSeasonDownload(season.ratingKey, season.title);
                                   }}
-                                  disabled={isDownloading(api.getSeasonDownloadUrl(season.ratingKey))}
-                                  className="btn-primary ml-2 disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap text-sm md:text-base px-3 md:px-4 py-2"
+                                  className="btn-primary ml-2 whitespace-nowrap text-sm md:text-base px-3 md:px-4 py-2"
                                   title="Download entire season as ZIP"
                                 >
-                                  {isDownloading(api.getSeasonDownloadUrl(season.ratingKey))
-                                    ? '⏳ Zipping...'
-                                    : '📦 Season'}
+                                  📦 Season
                                 </button>
                               </div>
 
@@ -603,28 +560,13 @@ export const MediaDetail: React.FC = () => {
                                               <button
                                                 ref={buttonRef}
                                                 onClick={() => openResolutionSelector(buttonKey)}
-                                                disabled={isDownloading(episode.Media![0].Part[0].key)}
-                                                className="btn-primary disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+                                                className="btn-primary flex items-center gap-1"
                                               >
-                                                {isDownloading(episode.Media![0].Part[0].key) ? (
-                                                  `${getDownloadProgress(episode.Media![0].Part[0].key)}%`
-                                                ) : (
-                                                  <>
-                                                    Download
-                                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                                                    </svg>
-                                                  </>
-                                                )}
+                                                Download
+                                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                                                </svg>
                                               </button>
-                                              {isDownloading(episode.Media![0].Part[0].key) && (
-                                                <div className="w-32 h-2 bg-dark-200 rounded-full overflow-hidden">
-                                                  <div
-                                                    className="h-full bg-gradient-to-r from-primary-500 to-primary-400 transition-all duration-300 ease-out"
-                                                    style={{ width: `${getDownloadProgress(episode.Media![0].Part[0].key)}%` }}
-                                                  />
-                                                </div>
-                                              )}
                                               {resolutionSelectorOpen === buttonKey && (
                                                 <ResolutionSelector
                                                   ratingKey={episode.ratingKey}
@@ -699,30 +641,15 @@ export const MediaDetail: React.FC = () => {
                                             );
                                           }
                                         }}
-                                        disabled={isDownloading(part.key)}
-                                        className="btn-primary disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+                                        className="btn-primary flex items-center gap-1"
                                       >
-                                        {isDownloading(part.key) ? (
-                                          `${getDownloadProgress(part.key)}%`
-                                        ) : (
-                                          <>
-                                            Download
-                                            {isVideoMedia(media) && (
-                                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                                              </svg>
-                                            )}
-                                          </>
+                                        Download
+                                        {isVideoMedia(media) && (
+                                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                                          </svg>
                                         )}
                                       </button>
-                                      {isDownloading(part.key) && (
-                                        <div className="w-32 h-2 bg-dark-200 rounded-full overflow-hidden">
-                                          <div
-                                            className="h-full bg-gradient-to-r from-primary-500 to-primary-400 transition-all duration-300 ease-out"
-                                            style={{ width: `${getDownloadProgress(part.key)}%` }}
-                                          />
-                                        </div>
-                                      )}
                                       {resolutionSelectorOpen === buttonKey && (
                                         <ResolutionSelector
                                           ratingKey={ratingKey!}

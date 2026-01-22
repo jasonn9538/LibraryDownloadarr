@@ -13,9 +13,9 @@ export const DownloadManager: React.FC = () => {
       {downloads.map((download) => (
         <div
           key={download.id}
-          className="bg-dark-100 border border-dark-50 rounded-lg shadow-lg p-4"
+          className="bg-dark-100 border border-dark-50 rounded-lg shadow-lg p-4 animate-fade-in"
         >
-          <div className="flex items-start justify-between mb-2">
+          <div className="flex items-start justify-between">
             <div className="flex-1 min-w-0 pr-2">
               <div className="text-sm font-medium truncate">{download.title}</div>
               <div className="text-xs text-gray-400 truncate">{download.filename}</div>
@@ -28,79 +28,17 @@ export const DownloadManager: React.FC = () => {
             </button>
           </div>
 
-          {download.status === 'downloading' && (
-            <>
-              {download.isBulkDownload ? (
-                // Indeterminate progress for bulk downloads (no Content-Length)
-                <>
-                  <div className="flex items-center justify-between text-xs mb-1">
-                    <span className="text-gray-400">Creating ZIP archive...</span>
-                    <span className="text-primary-400 font-semibold animate-pulse">●</span>
-                  </div>
-                  <div className="w-full h-2 bg-dark-200 rounded-full overflow-hidden">
-                    <div className="h-full bg-gradient-to-r from-primary-500 to-primary-400 animate-pulse" />
-                  </div>
-                </>
-              ) : download.isTranscoded ? (
-                // Progress bar for transcoded downloads with real percentage
-                <>
-                  <div className="flex items-center justify-between text-xs mb-1">
-                    <span className="text-gray-400">
-                      Transcoding to {download.resolution || 'lower resolution'}...
-                    </span>
-                    <span className="text-secondary-400 font-semibold">
-                      {download.progress > 0 ? `${download.progress}%` : <span className="animate-pulse">◉</span>}
-                    </span>
-                  </div>
-                  <div className="w-full h-2 bg-dark-200 rounded-full overflow-hidden">
-                    {download.progress > 0 ? (
-                      <div
-                        className="h-full bg-gradient-to-r from-secondary-500 to-primary-500 transition-all duration-500 ease-out"
-                        style={{ width: `${download.progress}%` }}
-                      />
-                    ) : (
-                      <div
-                        className="h-full bg-gradient-to-r from-secondary-500 via-primary-500 to-secondary-500"
-                        style={{
-                          backgroundSize: '200% 100%',
-                          animation: 'shimmer 2s ease-in-out infinite'
-                        }}
-                      />
-                    )}
-                  </div>
-                  <div className="text-[10px] text-gray-500 mt-1">
-                    {download.progress > 0
-                      ? 'Converting video on server...'
-                      : 'Starting transcode...'}
-                  </div>
-                </>
-              ) : (
-                // Percentage-based progress for single file downloads
-                <>
-                  <div className="flex items-center justify-between text-xs mb-1">
-                    <span className="text-gray-400">Downloading...</span>
-                    <span className="text-primary-400 font-semibold">{download.progress}%</span>
-                  </div>
-                  <div className="w-full h-2 bg-dark-200 rounded-full overflow-hidden">
-                    <div
-                      className="h-full bg-gradient-to-r from-primary-500 to-primary-400 transition-all duration-300 ease-out"
-                      style={{ width: `${download.progress}%` }}
-                    />
-                  </div>
-                </>
-              )}
-            </>
-          )}
-
-          {download.status === 'completed' && (
-            <div className="flex items-center text-xs text-green-400">
-              <span>✓ Download completed</span>
+          {download.status === 'started' && (
+            <div className="flex items-center text-xs text-green-400 mt-2">
+              <span className="mr-2">⬇️</span>
+              <span>Download started - check Chrome downloads</span>
             </div>
           )}
 
           {download.status === 'error' && (
-            <div className="flex items-center text-xs text-red-400">
-              <span>✗ Download failed: {download.error || 'Unknown error'}</span>
+            <div className="flex items-center text-xs text-red-400 mt-2">
+              <span className="mr-2">✗</span>
+              <span>Download failed: {download.error || 'Unknown error'}</span>
             </div>
           )}
         </div>

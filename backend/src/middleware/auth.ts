@@ -19,8 +19,10 @@ export interface AuthRequest extends Request {
 export const createAuthMiddleware = (db: DatabaseService) => {
   return async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
+      // Check Authorization header first, then query parameter (for direct downloads)
       const authHeader = req.headers.authorization;
-      const token = authHeader?.startsWith('Bearer ') ? authHeader.substring(7) : null;
+      const queryToken = req.query.token as string | undefined;
+      const token = authHeader?.startsWith('Bearer ') ? authHeader.substring(7) : queryToken || null;
 
       if (!token) {
         return res.status(401).json({ error: 'No token provided' });
