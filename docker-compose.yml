@@ -16,6 +16,8 @@ services:
       - TRANSCODE_DIR=/app/transcode
       # Maximum number of concurrent transcodes (default: 2)
       - MAX_CONCURRENT_TRANSCODES=2
+      # Hardware encoding: auto (detect), vaapi, qsv, or software (disable)
+      - HARDWARE_ENCODING=auto
       # Timezone configuration (set to your local timezone)
       - TZ=America/New_York
     volumes:
@@ -25,6 +27,12 @@ services:
       # Files are kept for 1 week after transcoding completes
       # Example: /mnt/SSD/transcode:/app/transcode
       - ./transcode:/app/transcode
+    # GPU access for hardware encoding (Intel QSV / AMD VAAPI)
+    devices:
+      - /dev/dri:/dev/dri
+    group_add:
+      - video
+      - render
     networks:
       - librarydownloadarr
 

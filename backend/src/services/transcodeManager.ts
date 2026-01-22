@@ -12,11 +12,70 @@ import { plexService } from './plexService';
 const CACHE_DIR = process.env.TRANSCODE_DIR || '/app/transcode';
 const CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 1 week
 const MAX_CONCURRENT_TRANSCODES = parseInt(process.env.MAX_CONCURRENT_TRANSCODES || '2', 10);
+const HARDWARE_ENCODING = process.env.HARDWARE_ENCODING || 'auto'; // auto, vaapi, qsv, software
 
 // HTTPS agent that bypasses SSL certificate validation for local Plex servers
 const httpsAgent = new https.Agent({
   rejectUnauthorized: false
 });
+
+// Hardware encoding detection
+let detectedHardwareEncoder: string | null = null;
+let hardwareDetectionDone = false;
+
+async function detectHardwareEncoder(): Promise<string | null> {
+  if (hardwareDetectionDone) return detectedHardwareEncoder;
+  hardwareDetectionDone = true;
+
+  if (HARDWARE_ENCODING === 'software') {
+    logger.info('Hardware encoding disabled by configuration');
+    return null;
+  }
+
+  // Check if /dev/dri exists (required for VAAPI/QSV)
+  if (!fs.existsSync('/dev/dri')) {
+    logger.info('No GPU devices found (/dev/dri not available), using software encoding');
+    return null;
+  }
+
+  // If user specified a specific encoder, use it
+  if (HARDWARE_ENCODING === 'vaapi') {
+    detectedHardwareEncoder = 'vaapi';
+    logger.info('Using VAAPI hardware encoding (configured)');
+    return 'vaapi';
+  }
+  if (HARDWARE_ENCODING === 'qsv') {
+    detectedHardwareEncoder = 'qsv';
+    logger.info('Using QSV hardware encoding (configured)');
+    return 'qsv';
+  }
+
+  // Auto-detect: try VAAPI first (works with both Intel and AMD)
+  try {
+    const { execSync } = require('child_process');
+    // Test VAAPI
+    execSync('ffmpeg -hide_banner -init_hw_device vaapi=va:/dev/dri/renderD128 -f lavfi -i nullsrc=s=256x256:d=1 -vf "format=nv12,hwupload" -c:v h264_vaapi -f null - 2>&1', { timeout: 10000 });
+    detectedHardwareEncoder = 'vaapi';
+    logger.info('VAAPI hardware encoding available and working');
+    return 'vaapi';
+  } catch {
+    logger.debug('VAAPI not available or not working');
+  }
+
+  // Try QSV (Intel Quick Sync)
+  try {
+    const { execSync } = require('child_process');
+    execSync('ffmpeg -hide_banner -init_hw_device qsv=qsv:hw -f lavfi -i nullsrc=s=256x256:d=1 -vf "format=nv12,hwupload=extra_hw_frames=64" -c:v h264_qsv -f null - 2>&1', { timeout: 10000 });
+    detectedHardwareEncoder = 'qsv';
+    logger.info('QSV hardware encoding available and working');
+    return 'qsv';
+  } catch {
+    logger.debug('QSV not available or not working');
+  }
+
+  logger.info('No hardware encoding available, using software encoding');
+  return null;
+}
 
 interface ActiveTranscode {
   jobId: string;
@@ -327,7 +386,9 @@ class TranscodeManager {
     if (!this.db) return;
 
     const cacheKey = this.getCacheKey(job.ratingKey, job.resolutionId);
-    const outputPath = path.join(CACHE_DIR, `${cacheKey}-${Date.now()}.mp4`);
+    const timestamp = Date.now();
+    const outputPath = path.join(CACHE_DIR, `${cacheKey}-${timestamp}.mp4`);
+    const inputTempPath = path.join(CACHE_DIR, `input-${cacheKey}-${timestamp}.tmp`);
 
     // Update job status
     this.db.updateTranscodeJobStatus(job.id, 'transcoding', {
@@ -341,6 +402,17 @@ class TranscodeManager {
       resolution: job.resolutionLabel,
       title: job.mediaTitle,
     });
+
+    // Helper to clean up temp file
+    const cleanupTempFile = () => {
+      try {
+        if (fs.existsSync(inputTempPath)) {
+          fs.unlinkSync(inputTempPath);
+        }
+      } catch {
+        // Ignore cleanup errors
+      }
+    };
 
     try {
       // Get Plex credentials from settings
@@ -361,11 +433,17 @@ class TranscodeManager {
       }
 
       const totalDuration = metadata.Media?.[0]?.duration || 0;
+      const durationSeconds = totalDuration / 1000;
 
       // Get direct download URL
       const downloadUrl = plexService.getDirectDownloadUrl(partKey, token);
 
-      // Fetch the file from Plex
+      // Detect hardware encoder
+      const hwEncoder = await detectHardwareEncoder();
+
+      // Download to temp file first (required for hardware encoding to work reliably)
+      logger.info('Downloading source file', { jobId: job.id, title: job.mediaTitle });
+
       const plexResponse = await axios({
         method: 'GET',
         url: downloadUrl,
@@ -373,33 +451,95 @@ class TranscodeManager {
         httpsAgent,
       });
 
-      // Build ffmpeg arguments - optimized for speed + compatibility + reasonable file size
-      const ffmpegArgs = [
-        '-i', 'pipe:0',
-        // Video settings
-        '-vf', `scale=-2:${job.resolutionHeight}`,
-        '-c:v', 'libx264',
-        '-preset', 'fast',           // Balance of speed and compression (better than ultrafast)
-        '-tune', 'film',             // Good for most video content
-        '-profile:v', 'main',        // Main profile for wide compatibility
-        '-level', '4.0',             // Level 4.0 supports up to 1080p on most devices
-        '-pix_fmt', 'yuv420p',       // Required for maximum compatibility
-        '-crf', '23',                // Better quality/size balance (lower = better quality)
-        '-maxrate', `${job.maxBitrate}k`,
-        '-bufsize', `${(job.maxBitrate || 4000) * 2}k`,
-        // Audio settings
-        '-c:a', 'aac',
-        '-b:a', '128k',
-        '-ac', '2',                  // Stereo audio
-        '-ar', '48000',              // Standard sample rate
-        // Performance
-        '-threads', '0',             // Use all CPU cores
-        // Output format - use faststart for better streaming/seeking
-        '-movflags', '+faststart',
-        '-f', 'mp4',
-        '-y',
-        outputPath
-      ];
+      // Write to temp file
+      const writeStream = fs.createWriteStream(inputTempPath);
+      await new Promise<void>((resolve, reject) => {
+        plexResponse.data.pipe(writeStream);
+        writeStream.on('finish', resolve);
+        writeStream.on('error', reject);
+        plexResponse.data.on('error', reject);
+      });
+
+      logger.info('Source file downloaded, starting encode', {
+        jobId: job.id,
+        hwEncoder: hwEncoder || 'software',
+        title: job.mediaTitle
+      });
+
+      // Build ffmpeg arguments based on encoder type
+      let ffmpegArgs: string[];
+
+      if (hwEncoder === 'vaapi') {
+        // VAAPI hardware encoding (Intel/AMD)
+        ffmpegArgs = [
+          '-hwaccel', 'vaapi',
+          '-hwaccel_device', '/dev/dri/renderD128',
+          '-hwaccel_output_format', 'vaapi',
+          '-i', inputTempPath,
+          '-vf', `format=nv12|vaapi,hwupload,scale_vaapi=w=-2:h=${job.resolutionHeight}`,
+          '-c:v', 'h264_vaapi',
+          '-profile:v', '77',  // Main profile
+          '-level', '40',      // Level 4.0
+          '-b:v', `${job.maxBitrate}k`,
+          '-maxrate', `${job.maxBitrate}k`,
+          '-bufsize', `${(job.maxBitrate || 4000) * 2}k`,
+          '-c:a', 'aac',
+          '-b:a', '128k',
+          '-ac', '2',
+          '-ar', '48000',
+          '-movflags', '+faststart',
+          '-f', 'mp4',
+          '-y',
+          outputPath
+        ];
+      } else if (hwEncoder === 'qsv') {
+        // Intel Quick Sync encoding
+        ffmpegArgs = [
+          '-hwaccel', 'qsv',
+          '-qsv_device', '/dev/dri/renderD128',
+          '-hwaccel_output_format', 'qsv',
+          '-i', inputTempPath,
+          '-vf', `scale_qsv=w=-2:h=${job.resolutionHeight}`,
+          '-c:v', 'h264_qsv',
+          '-profile:v', 'main',
+          '-level', '40',
+          '-b:v', `${job.maxBitrate}k`,
+          '-maxrate', `${job.maxBitrate}k`,
+          '-bufsize', `${(job.maxBitrate || 4000) * 2}k`,
+          '-c:a', 'aac',
+          '-b:a', '128k',
+          '-ac', '2',
+          '-ar', '48000',
+          '-movflags', '+faststart',
+          '-f', 'mp4',
+          '-y',
+          outputPath
+        ];
+      } else {
+        // Software encoding (libx264)
+        ffmpegArgs = [
+          '-i', inputTempPath,
+          '-vf', `scale=-2:${job.resolutionHeight}`,
+          '-c:v', 'libx264',
+          '-preset', 'fast',
+          '-tune', 'film',
+          '-profile:v', 'main',
+          '-level', '4.0',
+          '-pix_fmt', 'yuv420p',
+          '-crf', '23',
+          '-maxrate', `${job.maxBitrate}k`,
+          '-bufsize', `${(job.maxBitrate || 4000) * 2}k`,
+          '-c:a', 'aac',
+          '-b:a', '128k',
+          '-ac', '2',
+          '-ar', '48000',
+          '-threads', '0',
+          '-movflags', '+faststart',
+          '-f', 'mp4',
+          '-y',
+          outputPath
+        ];
+      }
 
       const ffmpeg = spawn('ffmpeg', ffmpegArgs, {
         stdio: ['pipe', 'pipe', 'pipe']
@@ -414,7 +554,6 @@ class TranscodeManager {
       this.activeTranscodes.set(cacheKey, activeTranscode);
 
       // Parse ffmpeg stderr for progress
-      const durationSeconds = totalDuration / 1000;
       ffmpeg.stderr.on('data', (data: Buffer) => {
         const output = data.toString();
 
@@ -427,7 +566,7 @@ class TranscodeManager {
           const currentTime = hours * 3600 + minutes * 60 + seconds;
           const progress = Math.min(99, Math.round((currentTime / durationSeconds) * 100));
 
-          // Update database (throttled)
+          // Update database
           if (this.db) {
             this.db.updateTranscodeJobProgress(job.id, progress);
           }
@@ -436,10 +575,12 @@ class TranscodeManager {
 
       ffmpeg.on('error', (err) => {
         logger.error('ffmpeg process error', { error: err.message, jobId: job.id });
+        cleanupTempFile();
         this.handleTranscodeError(job.id, cacheKey, err.message);
       });
 
       ffmpeg.on('close', (code) => {
+        cleanupTempFile();
         if (code === 0) {
           this.handleTranscodeComplete(job.id, cacheKey, outputPath);
         } else {
@@ -450,21 +591,8 @@ class TranscodeManager {
         }
       });
 
-      // Pipe input stream to ffmpeg
-      plexResponse.data.pipe(ffmpeg.stdin);
-
-      plexResponse.data.on('error', (err: Error) => {
-        logger.error('Input stream error', { error: err.message, jobId: job.id });
-        ffmpeg.kill('SIGTERM');
-      });
-
-      ffmpeg.stdin.on('error', (err: NodeJS.ErrnoException) => {
-        if (err.code !== 'EPIPE') {
-          logger.error('ffmpeg stdin error', { error: err.message, jobId: job.id });
-        }
-      });
-
     } catch (error: any) {
+      cleanupTempFile();
       logger.error('Failed to start transcode', {
         jobId: job.id,
         error: error.message,
