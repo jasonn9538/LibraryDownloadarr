@@ -473,12 +473,12 @@ class TranscodeManager {
 
       if (hwEncoder === 'vaapi') {
         // VAAPI hardware encoding (Intel/AMD)
+        // Use -init_hw_device for software decode + hardware encode workflow
         ffmpegArgs = [
-          '-hwaccel', 'vaapi',
-          '-hwaccel_device', '/dev/dri/renderD128',
-          '-hwaccel_output_format', 'vaapi',
+          '-init_hw_device', 'vaapi=va:/dev/dri/renderD128',
+          '-filter_hw_device', 'va',
           '-i', inputTempPath,
-          '-vf', `format=nv12|vaapi,hwupload,scale_vaapi=w=-2:h=${job.resolutionHeight}`,
+          '-vf', `format=nv12,hwupload,scale_vaapi=w=-2:h=${job.resolutionHeight}`,
           '-c:v', 'h264_vaapi',
           '-profile:v', '77',  // Main profile
           '-level', '40',      // Level 4.0
@@ -496,12 +496,12 @@ class TranscodeManager {
         ];
       } else if (hwEncoder === 'qsv') {
         // Intel Quick Sync encoding
+        // Use -init_hw_device for software decode + hardware encode workflow
         ffmpegArgs = [
-          '-hwaccel', 'qsv',
-          '-qsv_device', '/dev/dri/renderD128',
-          '-hwaccel_output_format', 'qsv',
+          '-init_hw_device', 'qsv=qsv:hw',
+          '-filter_hw_device', 'qsv',
           '-i', inputTempPath,
-          '-vf', `scale_qsv=w=-2:h=${job.resolutionHeight}`,
+          '-vf', `format=nv12,hwupload=extra_hw_frames=64,scale_qsv=w=-2:h=${job.resolutionHeight}`,
           '-c:v', 'h264_qsv',
           '-profile:v', 'main',
           '-level', '40',
