@@ -5,8 +5,8 @@ import path from 'path';
 import axios from 'axios';
 import https from 'https';
 import { logger } from '../utils/logger';
-import { DatabaseService, TranscodeJob, TranscodeJobStatus } from '../models/database';
-import { plexService, RESOLUTION_PRESETS } from './plexService';
+import { DatabaseService, TranscodeJob } from '../models/database';
+import { plexService } from './plexService';
 
 // Directory for cached transcodes - configurable via environment variable
 const CACHE_DIR = process.env.TRANSCODE_DIR || '/app/transcode';

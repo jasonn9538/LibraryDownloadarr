@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { DatabaseService } from '../models/database';
 import { transcodeManager } from '../services/transcodeManager';
-import { plexService, RESOLUTION_PRESETS, getAvailableResolutions } from '../services/plexService';
+import { plexService, RESOLUTION_PRESETS } from '../services/plexService';
 import { logger } from '../utils/logger';
 import { AuthRequest, createAuthMiddleware } from '../middleware/auth';
 
