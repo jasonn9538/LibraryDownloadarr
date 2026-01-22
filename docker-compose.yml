@@ -11,11 +11,17 @@ services:
       - LOG_LEVEL=debug
       # Database path (persisted to volume)
       - DATABASE_PATH=/app/data/librarydownloadarr.db
+      # Transcode directory (for temporary transcoded files, cached for 1 hour)
+      # IMPORTANT: Mount a fast drive for better transcoding performance
+      - TRANSCODE_DIR=/app/transcode
       # Timezone configuration (set to your local timezone)
       - TZ=America/New_York
     volumes:
       - ./data:/app/data
       - ./logs:/app/logs
+      # Mount your transcode directory - use a fast drive for best performance
+      # Example: /mnt/HDD1/transcoding_temp:/app/transcode
+      - ./transcode:/app/transcode
     networks:
       - librarydownloadarr
 

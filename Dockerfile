@@ -46,13 +46,14 @@ COPY --from=backend-builder /app/backend/dist ./dist
 # Copy built frontend
 COPY --from=frontend-builder /app/frontend/dist ./public
 
-# Create data directory
-RUN mkdir -p /app/data /app/logs
+# Create data directory and transcode directory
+RUN mkdir -p /app/data /app/logs /app/transcode
 
 # Set environment variables
 ENV NODE_ENV=production
 ENV PORT=5069
 ENV DATABASE_PATH=/app/data/librarydownloadarr.db
+ENV TRANSCODE_DIR=/app/transcode
 
 # Expose port
 EXPOSE 5069

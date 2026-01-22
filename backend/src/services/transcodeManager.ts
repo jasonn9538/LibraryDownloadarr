@@ -4,8 +4,8 @@ import fs from 'fs';
 import path from 'path';
 import { logger } from '../utils/logger';
 
-// Directory for cached transcodes
-const CACHE_DIR = '/tmp/librarydownloadarr-transcode';
+// Directory for cached transcodes - configurable via environment variable
+const CACHE_DIR = process.env.TRANSCODE_DIR || '/app/transcode';
 const CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
 
 interface TranscodeJob {
@@ -26,11 +26,32 @@ interface TranscodeJob {
 class TranscodeManager {
   private jobs: Map<string, TranscodeJob> = new Map();
   private cleanupInterval: NodeJS.Timeout | null = null;
+  private initialized: boolean = false;
 
   constructor() {
+    this.initialize();
+  }
+
+  private initialize(): void {
+    // Check if transcode directory is configured
+    if (!process.env.TRANSCODE_DIR) {
+      logger.warn('TRANSCODE_DIR not configured, using default: /app/transcode');
+    }
+
     // Ensure cache directory exists
-    if (!fs.existsSync(CACHE_DIR)) {
-      fs.mkdirSync(CACHE_DIR, { recursive: true });
+    try {
+      if (!fs.existsSync(CACHE_DIR)) {
+        fs.mkdirSync(CACHE_DIR, { recursive: true });
+      }
+      this.initialized = true;
+      logger.info('Transcode manager initialized', { cacheDir: CACHE_DIR });
+    } catch (err) {
+      logger.error('Failed to create transcode directory', {
+        cacheDir: CACHE_DIR,
+        error: err instanceof Error ? err.message : 'Unknown error'
+      });
+      this.initialized = false;
+      return;
     }
 
     // Start cleanup interval
@@ -38,6 +59,14 @@ class TranscodeManager {
 
     // Clean up on startup
     this.cleanupOldFiles();
+  }
+
+  isInitialized(): boolean {
+    return this.initialized;
+  }
+
+  getCacheDir(): string {
+    return CACHE_DIR;
   }
 
   getCacheKey(ratingKey: string, resolutionId: string): string {
@@ -65,8 +94,12 @@ class TranscodeManager {
     maxBitrate: number,
     totalDuration: number, // in milliseconds from Plex
     inputStream: NodeJS.ReadableStream,
-    filename: string
+    _filename: string // Prefixed with _ to indicate intentionally unused
   ): Promise<TranscodeJob> {
+    if (!this.initialized) {
+      throw new Error('Transcode manager not initialized - check TRANSCODE_DIR configuration');
+    }
+
     const cacheKey = this.getCacheKey(ratingKey, resolutionId);
     const existingJob = this.jobs.get(cacheKey);
 
@@ -159,7 +192,7 @@ class TranscodeManager {
         try {
           const stats = fs.statSync(outputPath);
           job.bytesWritten = stats.size;
-        } catch (e) {
+        } catch {
           // File might be in use
         }
       }
@@ -170,7 +203,7 @@ class TranscodeManager {
       logger.error('ffmpeg process error', { error: err.message, cacheKey });
       job.status = 'error';
       job.error = err.message;
-      this.notifySubscribersOfError(job, err.message);
+      this.notifySubscribersOfError(job);
     });
 
     ffmpeg.on('close', (code) => {
@@ -179,12 +212,12 @@ class TranscodeManager {
         job.status = 'completed';
         job.progress = 100;
         logger.info('Transcode completed', { cacheKey, outputPath });
-        this.notifySubscribersOfCompletion(job);
+        this.notifySubscribersOfCompletion();
       } else if (job.status !== 'error') {
         job.status = 'error';
         job.error = `ffmpeg exited with code ${code}`;
         logger.error('ffmpeg exited with error', { code, cacheKey });
-        this.notifySubscribersOfError(job, job.error);
+        this.notifySubscribersOfError(job);
       }
     });
 
@@ -268,10 +301,10 @@ class TranscodeManager {
             end: fileSize - 1
           });
 
-          readStream.on('data', (chunk: Buffer) => {
+          readStream.on('data', (chunk: Buffer | string) => {
             if (!res.writableEnded) {
               res.write(chunk);
-              bytesSent += chunk.length;
+              bytesSent += typeof chunk === 'string' ? Buffer.byteLength(chunk) : chunk.length;
             }
           });
 
@@ -296,7 +329,7 @@ class TranscodeManager {
             res.end();
           }
         }
-      } catch (e) {
+      } catch {
         // File might be in use, try again next interval
       }
     };
@@ -311,11 +344,11 @@ class TranscodeManager {
     });
   }
 
-  private notifySubscribersOfCompletion(job: TranscodeJob): void {
+  private notifySubscribersOfCompletion(): void {
     // Subscribers are already streaming, they'll get the rest of the file
   }
 
-  private notifySubscribersOfError(job: TranscodeJob, error: string): void {
+  private notifySubscribersOfError(job: TranscodeJob): void {
     for (const res of job.subscribers) {
       if (!res.writableEnded) {
         res.end();
@@ -339,7 +372,7 @@ class TranscodeManager {
     if (fs.existsSync(job.outputPath)) {
       try {
         fs.unlinkSync(job.outputPath);
-      } catch (e) {
+      } catch {
         logger.warn('Failed to delete transcode file', { path: job.outputPath });
       }
     }
@@ -352,22 +385,24 @@ class TranscodeManager {
    * Clean up old cached files (older than 1 hour)
    */
   private cleanupOldFiles(): void {
+    if (!this.initialized) return;
+
     const now = Date.now();
 
     // Clean up completed jobs older than TTL
-    for (const [cacheKey, job] of this.jobs) {
+    for (const [key, job] of this.jobs) {
       if (job.status === 'completed' && (now - job.createdAt) > CACHE_TTL_MS) {
-        logger.info('Cleaning up old transcode cache', { cacheKey, age: now - job.createdAt });
+        logger.info('Cleaning up old transcode cache', { cacheKey: key, age: now - job.createdAt });
 
         if (fs.existsSync(job.outputPath)) {
           try {
             fs.unlinkSync(job.outputPath);
-          } catch (e) {
+          } catch {
             logger.warn('Failed to delete old transcode file', { path: job.outputPath });
           }
         }
 
-        this.jobs.delete(cacheKey);
+        this.jobs.delete(key);
       }
     }
 
@@ -382,7 +417,7 @@ class TranscodeManager {
           logger.info('Cleaned up orphaned transcode file', { file });
         }
       }
-    } catch (e) {
+    } catch {
       // Directory might not exist yet
     }
   }
@@ -395,7 +430,7 @@ class TranscodeManager {
       clearInterval(this.cleanupInterval);
     }
 
-    for (const [cacheKey, job] of this.jobs) {
+    for (const [, job] of this.jobs) {
       if (job.ffmpegProcess && !job.ffmpegProcess.killed) {
         job.ffmpegProcess.kill('SIGTERM');
       }
