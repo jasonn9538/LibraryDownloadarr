@@ -12,7 +12,7 @@ interface Download {
   error?: string;
   isBulkDownload?: boolean; // True for season/album zips (no progress tracking)
   isTranscoded?: boolean; // True for transcoded downloads (no Content-Length)
-  quality?: string; // Quality label for display
+  resolution?: string; // Resolution label for display
 }
 
 interface DownloadContextType {
@@ -22,7 +22,7 @@ interface DownloadContextType {
     partKey: string,
     filename: string,
     title: string,
-    options?: { qualityId?: string; qualityLabel?: string; isOriginal?: boolean }
+    options?: { resolutionId?: string; resolutionLabel?: string; isOriginal?: boolean }
   ) => Promise<void>;
   removeDownload: (id: string) => void;
 }
@@ -68,15 +68,15 @@ export const DownloadProvider: React.FC<DownloadProviderProps> = ({ children }) 
     partKey: string,
     filename: string,
     title: string,
-    options?: { qualityId?: string; qualityLabel?: string; isOriginal?: boolean }
+    options?: { resolutionId?: string; resolutionLabel?: string; isOriginal?: boolean }
   ): Promise<void> => {
     const downloadId = `${ratingKey}-${partKey}-${Date.now()}`;
 
     // Check if this is a bulk download (season or album ZIP)
     const isBulkDownload = partKey.includes('/season/') || partKey.includes('/album/');
 
-    // Check if this is a transcoded download (non-original quality)
-    const isTranscoded = !!(options?.qualityId && !options?.isOriginal);
+    // Check if this is a transcoded download (non-original resolution)
+    const isTranscoded = !!(options?.resolutionId && !options?.isOriginal);
 
     // Add download to state
     const newDownload: Download = {
@@ -84,12 +84,12 @@ export const DownloadProvider: React.FC<DownloadProviderProps> = ({ children }) 
       ratingKey,
       partKey,
       filename,
-      title: options?.qualityLabel ? `${title} [${options.qualityLabel}]` : title,
+      title: options?.resolutionLabel ? `${title} [${options.resolutionLabel}]` : title,
       progress: 0,
       status: 'downloading',
       isBulkDownload,
       isTranscoded,
-      quality: options?.qualityLabel,
+      resolution: options?.resolutionLabel,
     };
 
     setDownloads((prev) => [...prev, newDownload]);
@@ -101,9 +101,9 @@ export const DownloadProvider: React.FC<DownloadProviderProps> = ({ children }) 
       if (partKey.startsWith('/api/')) {
         // Already a full URL for bulk downloads
         downloadUrl = partKey;
-      } else if (isTranscoded && options?.qualityId) {
-        // Use transcode endpoint for non-original quality
-        downloadUrl = api.getTranscodeDownloadUrl(ratingKey, options.qualityId);
+      } else if (isTranscoded && options?.resolutionId) {
+        // Use transcode endpoint for non-original resolution
+        downloadUrl = api.getTranscodeDownloadUrl(ratingKey, options.resolutionId);
       } else {
         // Regular direct file download
         downloadUrl = api.getDownloadUrl(ratingKey, partKey);

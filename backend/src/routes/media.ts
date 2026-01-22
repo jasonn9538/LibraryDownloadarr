@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { DatabaseService } from '../models/database';
-import { plexService, QUALITY_PRESETS, getAvailableQualities } from '../services/plexService';
+import { plexService, RESOLUTION_PRESETS, getAvailableResolutions } from '../services/plexService';
 import { logger } from '../utils/logger';
 import { AuthRequest, createAuthMiddleware } from '../middleware/auth';
 import axios from 'axios';
@@ -501,9 +501,9 @@ export const createMediaRouter = (db: DatabaseService) => {
     }
   });
 
-  // Get available quality options for a media item
-  // Returns only qualities that are <= the source resolution
-  router.get('/:ratingKey/qualities', authMiddleware, async (req: AuthRequest, res) => {
+  // Get available resolution options for a media item
+  // Returns only resolutions that are <= the source resolution
+  router.get('/:ratingKey/resolutions', authMiddleware, async (req: AuthRequest, res) => {
     try {
       const { ratingKey } = req.params;
       const { token, serverUrl, error } = getUserCredentials(req);
@@ -528,11 +528,11 @@ export const createMediaRouter = (db: DatabaseService) => {
       const sourceHeight = sourceMedia.height || 0;
       const sourceWidth = sourceMedia.width || 0;
 
-      // Get available quality presets based on source resolution
-      const availableQualities = getAvailableQualities(sourceHeight);
+      // Get available resolution presets based on source resolution
+      const availableResolutions = getAvailableResolutions(sourceHeight);
 
       // Add "Original" option at the top
-      const qualities = [
+      const resolutions = [
         {
           id: 'original',
           label: `Original (${sourceMedia.videoResolution || `${sourceWidth}x${sourceHeight}`})`,
@@ -544,18 +544,18 @@ export const createMediaRouter = (db: DatabaseService) => {
           container: sourceMedia.container,
           fileSize: sourceMedia.Part?.[0]?.size,
         },
-        ...availableQualities.map(q => ({
-          ...q,
+        ...availableResolutions.map(r => ({
+          ...r,
           isOriginal: false,
           // Estimate file size based on bitrate and duration
           estimatedSize: sourceMedia.duration
-            ? Math.round((q.maxVideoBitrate * 1000 * (sourceMedia.duration / 1000)) / 8)
+            ? Math.round((r.maxVideoBitrate * 1000 * (sourceMedia.duration / 1000)) / 8)
             : undefined,
         })),
       ];
 
       return res.json({
-        qualities,
+        resolutions,
         source: {
           height: sourceHeight,
           width: sourceWidth,
@@ -566,25 +566,25 @@ export const createMediaRouter = (db: DatabaseService) => {
         }
       });
     } catch (error) {
-      logger.error('Failed to get quality options', { error });
-      return res.status(500).json({ error: 'Failed to get quality options' });
+      logger.error('Failed to get resolution options', { error });
+      return res.status(500).json({ error: 'Failed to get resolution options' });
     }
   });
 
-  // Download media with transcoding to a specific quality
+  // Download media with transcoding to a specific resolution
   router.get('/:ratingKey/download/transcode', authMiddleware, async (req: AuthRequest, res) => {
     try {
       const { ratingKey } = req.params;
-      const { quality: qualityId } = req.query;
+      const { resolution: resolutionId } = req.query;
 
-      if (!qualityId || typeof qualityId !== 'string') {
-        return res.status(400).json({ error: 'Quality parameter is required' });
+      if (!resolutionId || typeof resolutionId !== 'string') {
+        return res.status(400).json({ error: 'Resolution parameter is required' });
       }
 
-      // Find the quality preset
-      const qualityPreset = QUALITY_PRESETS.find(q => q.id === qualityId);
-      if (!qualityPreset) {
-        return res.status(400).json({ error: 'Invalid quality preset' });
+      // Find the resolution preset
+      const resolutionPreset = RESOLUTION_PRESETS.find(r => r.id === resolutionId);
+      if (!resolutionPreset) {
+        return res.status(400).json({ error: 'Invalid resolution preset' });
       }
 
       const { token, serverUrl, error } = getUserCredentials(req);
@@ -601,16 +601,16 @@ export const createMediaRouter = (db: DatabaseService) => {
 
       const metadata = await plexService.getMediaMetadata(ratingKey, token);
 
-      // Verify the requested quality is <= source quality
+      // Verify the requested resolution is <= source resolution
       const sourceMedia = metadata.Media?.[0];
       if (!sourceMedia) {
         return res.status(404).json({ error: 'No media found for this item' });
       }
 
       const sourceHeight = sourceMedia.height || 0;
-      if (qualityPreset.height > sourceHeight) {
+      if (resolutionPreset.height > sourceHeight) {
         return res.status(400).json({
-          error: `Cannot transcode to ${qualityPreset.label} - source is only ${sourceHeight}p`
+          error: `Cannot transcode to ${resolutionPreset.label} - source is only ${sourceHeight}p`
         });
       }
 
@@ -621,7 +621,7 @@ export const createMediaRouter = (db: DatabaseService) => {
         isAdmin: req.user?.isAdmin,
         ratingKey,
         mediaTitle: metadata.title,
-        requestedQuality: qualityPreset.label,
+        requestedResolution: resolutionPreset.label,
         sourceResolution: `${sourceMedia.width}x${sourceHeight}`,
       });
 
@@ -659,11 +659,11 @@ export const createMediaRouter = (db: DatabaseService) => {
       }
 
       // Generate transcode URL
-      const transcodeUrl = plexService.getTranscodeDownloadUrl(ratingKey, token, qualityPreset);
+      const transcodeUrl = plexService.getTranscodeDownloadUrl(ratingKey, token, resolutionPreset);
 
       logger.debug('Transcode URL generated', {
         ratingKey,
-        quality: qualityPreset.id,
+        resolution: resolutionPreset.id,
         url: transcodeUrl.replace(token, '[REDACTED]')
       });
 
@@ -693,8 +693,8 @@ export const createMediaRouter = (db: DatabaseService) => {
         throw downloadError;
       }
 
-      // Log the download with formatted title including library name and quality
-      const formattedTitle = formatMediaTitle(metadata, libraryTitle) + ` [${qualityPreset.label}]`;
+      // Log the download with formatted title including library name and resolution
+      const formattedTitle = formatMediaTitle(metadata, libraryTitle) + ` [${resolutionPreset.label}]`;
 
       // For transcoded downloads, we don't know exact file size upfront
       db.logDownload(
@@ -705,10 +705,10 @@ export const createMediaRouter = (db: DatabaseService) => {
       );
 
       // Set headers for download
-      // Generate filename with quality suffix
+      // Generate filename with resolution suffix
       const originalFilename = metadata.Media?.[0]?.Part?.[0]?.file.split('/').pop() || 'download';
       const baseName = originalFilename.replace(/\.[^/.]+$/, ''); // Remove extension
-      const filename = `${baseName}_${qualityPreset.id}.${qualityPreset.container}`;
+      const filename = `${baseName}_${resolutionPreset.id}.${resolutionPreset.container}`;
 
       res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
       res.setHeader('Content-Type', response.headers['content-type'] || 'video/mp4');

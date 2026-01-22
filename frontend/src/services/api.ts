@@ -161,9 +161,9 @@ class ApiClient {
     return `/api/media/${ratingKey}/download?partKey=${encodeURIComponent(partKey)}`;
   }
 
-  // Get available quality options for a media item
-  async getQualityOptions(ratingKey: string): Promise<{
-    qualities: Array<{
+  // Get available resolution options for a media item
+  async getResolutionOptions(ratingKey: string): Promise<{
+    resolutions: Array<{
       id: string;
       label: string;
       height: number;
@@ -185,13 +185,13 @@ class ApiClient {
       container: string;
     };
   }> {
-    const response = await this.client.get(`/media/${ratingKey}/qualities`);
+    const response = await this.client.get(`/media/${ratingKey}/resolutions`);
     return response.data;
   }
 
-  // Get download URL for transcoded quality
-  getTranscodeDownloadUrl(ratingKey: string, qualityId: string): string {
-    return `/api/media/${ratingKey}/download/transcode?quality=${encodeURIComponent(qualityId)}`;
+  // Get download URL for transcoded resolution
+  getTranscodeDownloadUrl(ratingKey: string, resolutionId: string): string {
+    return `/api/media/${ratingKey}/download/transcode?resolution=${encodeURIComponent(resolutionId)}`;
   }
 
   async getSeasonSize(seasonRatingKey: string): Promise<{ totalSize: number; fileCount: number; totalSizeGB: string }> {

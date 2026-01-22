@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { api } from '../services/api';
 
-export interface QualityOption {
+export interface ResolutionOption {
   id: string;
   label: string;
   height: number;
@@ -15,29 +15,29 @@ export interface QualityOption {
   estimatedSize?: number;
 }
 
-interface QualitySelectorProps {
+interface ResolutionSelectorProps {
   ratingKey: string;
-  onSelect: (quality: QualityOption) => void;
+  onSelect: (resolution: ResolutionOption) => void;
   onCancel: () => void;
   isOpen: boolean;
   buttonRef?: React.RefObject<HTMLButtonElement>;
 }
 
-export const QualitySelector: React.FC<QualitySelectorProps> = ({
+export const ResolutionSelector: React.FC<ResolutionSelectorProps> = ({
   ratingKey,
   onSelect,
   onCancel,
   isOpen,
   buttonRef,
 }) => {
-  const [qualities, setQualities] = useState<QualityOption[]>([]);
+  const [resolutions, setResolutions] = useState<ResolutionOption[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (isOpen) {
-      loadQualities();
+      loadResolutions();
     }
   }, [isOpen, ratingKey]);
 
@@ -63,15 +63,15 @@ export const QualitySelector: React.FC<QualitySelectorProps> = ({
     };
   }, [isOpen, onCancel, buttonRef]);
 
-  const loadQualities = async () => {
+  const loadResolutions = async () => {
     setIsLoading(true);
     setError('');
 
     try {
-      const response = await api.getQualityOptions(ratingKey);
-      setQualities(response.qualities);
+      const response = await api.getResolutionOptions(ratingKey);
+      setResolutions(response.resolutions);
     } catch (err: any) {
-      setError(err.response?.data?.error || 'Failed to load quality options');
+      setError(err.response?.data?.error || 'Failed to load resolution options');
     } finally {
       setIsLoading(false);
     }
@@ -93,8 +93,8 @@ export const QualitySelector: React.FC<QualitySelectorProps> = ({
       className="absolute right-0 top-full mt-2 z-50 bg-dark-100 border border-dark-50 rounded-lg shadow-xl min-w-[280px] overflow-hidden"
     >
       <div className="p-3 border-b border-dark-50 bg-dark-200">
-        <h3 className="text-sm font-semibold text-white">Select Quality</h3>
-        <p className="text-xs text-gray-400 mt-1">Choose download quality</p>
+        <h3 className="text-sm font-semibold text-white">Select Resolution</h3>
+        <p className="text-xs text-gray-400 mt-1">Choose download resolution</p>
       </div>
 
       {isLoading ? (
@@ -106,7 +106,7 @@ export const QualitySelector: React.FC<QualitySelectorProps> = ({
         <div className="p-4 text-center text-red-400">
           <p className="text-sm">{error}</p>
           <button
-            onClick={loadQualities}
+            onClick={loadResolutions}
             className="mt-2 text-xs text-primary-500 hover:text-primary-400"
           >
             Retry
@@ -114,47 +114,47 @@ export const QualitySelector: React.FC<QualitySelectorProps> = ({
         </div>
       ) : (
         <div className="max-h-[300px] overflow-y-auto">
-          {qualities.map((quality, index) => (
+          {resolutions.map((resolution, index) => (
             <button
-              key={quality.id}
-              onClick={() => onSelect(quality)}
+              key={resolution.id}
+              onClick={() => onSelect(resolution)}
               className={`w-full px-4 py-3 text-left hover:bg-dark-200 transition-colors flex items-center justify-between group ${
-                index !== qualities.length - 1 ? 'border-b border-dark-50' : ''
+                index !== resolutions.length - 1 ? 'border-b border-dark-50' : ''
               }`}
             >
               <div>
                 <div className="flex items-center gap-2">
                   <span className="text-sm font-medium text-white group-hover:text-primary-500">
-                    {quality.label}
+                    {resolution.label}
                   </span>
-                  {quality.isOriginal && (
+                  {resolution.isOriginal && (
                     <span className="px-1.5 py-0.5 text-[10px] bg-primary-500/20 text-primary-400 rounded">
                       ORIGINAL
                     </span>
                   )}
                 </div>
                 <div className="text-xs text-gray-400 mt-0.5">
-                  {quality.isOriginal ? (
+                  {resolution.isOriginal ? (
                     <>
-                      {quality.codec?.toUpperCase()} • {quality.container?.toUpperCase()}
-                      {quality.bitrate && ` • ${Math.round(quality.bitrate / 1000)} Mbps`}
+                      {resolution.codec?.toUpperCase()} • {resolution.container?.toUpperCase()}
+                      {resolution.bitrate && ` • ${Math.round(resolution.bitrate / 1000)} Mbps`}
                     </>
                   ) : (
                     <>
-                      {quality.width}x{quality.height} • H264 • MP4
-                      {quality.maxVideoBitrate && ` • ~${Math.round(quality.maxVideoBitrate / 1000)} Mbps`}
+                      {resolution.width}x{resolution.height} • H264 • MP4
+                      {resolution.maxVideoBitrate && ` • ~${Math.round(resolution.maxVideoBitrate / 1000)} Mbps`}
                     </>
                   )}
                 </div>
               </div>
               <div className="text-right">
-                {quality.isOriginal && quality.fileSize ? (
+                {resolution.isOriginal && resolution.fileSize ? (
                   <span className="text-xs text-gray-400">
-                    {formatFileSize(quality.fileSize)}
+                    {formatFileSize(resolution.fileSize)}
                   </span>
-                ) : quality.estimatedSize ? (
+                ) : resolution.estimatedSize ? (
                   <span className="text-xs text-gray-500">
-                    ~{formatFileSize(quality.estimatedSize)}
+                    ~{formatFileSize(resolution.estimatedSize)}
                   </span>
                 ) : null}
               </div>

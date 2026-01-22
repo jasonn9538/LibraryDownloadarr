@@ -6,7 +6,7 @@ import { api } from '../services/api';
 import { MediaItem } from '../types';
 import { useDownloads } from '../contexts/DownloadContext';
 import { useMobileMenu } from '../hooks/useMobileMenu';
-import { QualitySelector, QualityOption } from '../components/QualitySelector';
+import { ResolutionSelector, ResolutionOption } from '../components/ResolutionSelector';
 
 export const MediaDetail: React.FC = () => {
   const { ratingKey } = useParams<{ ratingKey: string }>();
@@ -20,8 +20,8 @@ export const MediaDetail: React.FC = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
 
-  // State for quality selector
-  const [qualitySelectorOpen, setQualitySelectorOpen] = useState<string | null>(null);
+  // State for resolution selector
+  const [resolutionSelectorOpen, setResolutionSelectorOpen] = useState<string | null>(null);
   const downloadButtonRefs = useRef<{ [key: string]: React.RefObject<HTMLButtonElement> }>({});
 
   useEffect(() => {
@@ -110,24 +110,24 @@ export const MediaDetail: React.FC = () => {
     return mediaItem.type === 'movie' || mediaItem.type === 'episode';
   };
 
-  // Open quality selector for video content
-  const openQualitySelector = (itemKey: string) => {
-    setQualitySelectorOpen(itemKey);
+  // Open resolution selector for video content
+  const openResolutionSelector = (itemKey: string) => {
+    setResolutionSelectorOpen(itemKey);
   };
 
-  // Handle quality selection
-  const handleQualitySelect = async (
-    quality: QualityOption,
+  // Handle resolution selection
+  const handleResolutionSelect = async (
+    resolution: ResolutionOption,
     itemRatingKey: string,
     partKey: string,
     filename: string,
     itemTitle: string,
     fileSize?: number
   ) => {
-    setQualitySelectorOpen(null);
+    setResolutionSelectorOpen(null);
 
-    // Check file size and warn if over 10GB (only for original quality)
-    if (quality.isOriginal && fileSize) {
+    // Check file size and warn if over 10GB (only for original resolution)
+    if (resolution.isOriginal && fileSize) {
       const tenGB = 10737418240;
       if (fileSize > tenGB) {
         const sizeGB = (fileSize / 1073741824).toFixed(2);
@@ -142,16 +142,16 @@ export const MediaDetail: React.FC = () => {
 
     // Generate appropriate filename for transcoded downloads
     let downloadFilename = filename;
-    if (!quality.isOriginal) {
+    if (!resolution.isOriginal) {
       const baseName = filename.replace(/\.[^/.]+$/, '');
-      downloadFilename = `${baseName}_${quality.id}.mp4`;
+      downloadFilename = `${baseName}_${resolution.id}.mp4`;
     }
 
-    // Use the global download context with quality options
+    // Use the global download context with resolution options
     await startDownload(itemRatingKey, partKey, downloadFilename, itemTitle, {
-      qualityId: quality.id,
-      qualityLabel: quality.label,
-      isOriginal: quality.isOriginal,
+      resolutionId: resolution.id,
+      resolutionLabel: resolution.label,
+      isOriginal: resolution.isOriginal,
     });
   };
 
@@ -442,7 +442,7 @@ export const MediaDetail: React.FC = () => {
                                   <div className="flex flex-col items-end gap-2 relative">
                                     <button
                                       ref={buttonRef}
-                                      onClick={() => openQualitySelector(buttonKey)}
+                                      onClick={() => openResolutionSelector(buttonKey)}
                                       disabled={isDownloading(episode.Media![0].Part[0].key)}
                                       className="btn-primary disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
                                     >
@@ -465,14 +465,14 @@ export const MediaDetail: React.FC = () => {
                                         />
                                       </div>
                                     )}
-                                    {qualitySelectorOpen === buttonKey && (
-                                      <QualitySelector
+                                    {resolutionSelectorOpen === buttonKey && (
+                                      <ResolutionSelector
                                         ratingKey={episode.ratingKey}
                                         isOpen={true}
                                         buttonRef={buttonRef}
-                                        onCancel={() => setQualitySelectorOpen(null)}
+                                        onCancel={() => setResolutionSelectorOpen(null)}
                                         onSelect={(quality) =>
-                                          handleQualitySelect(
+                                          handleResolutionSelect(
                                             quality,
                                             episode.ratingKey,
                                             episode.Media![0].Part[0].key,
@@ -570,7 +570,7 @@ export const MediaDetail: React.FC = () => {
                                             <div className="flex flex-col items-end gap-2 relative">
                                               <button
                                                 ref={buttonRef}
-                                                onClick={() => openQualitySelector(buttonKey)}
+                                                onClick={() => openResolutionSelector(buttonKey)}
                                                 disabled={isDownloading(episode.Media![0].Part[0].key)}
                                                 className="btn-primary disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
                                               >
@@ -593,14 +593,14 @@ export const MediaDetail: React.FC = () => {
                                                   />
                                                 </div>
                                               )}
-                                              {qualitySelectorOpen === buttonKey && (
-                                                <QualitySelector
+                                              {resolutionSelectorOpen === buttonKey && (
+                                                <ResolutionSelector
                                                   ratingKey={episode.ratingKey}
                                                   isOpen={true}
                                                   buttonRef={buttonRef}
-                                                  onCancel={() => setQualitySelectorOpen(null)}
+                                                  onCancel={() => setResolutionSelectorOpen(null)}
                                                   onSelect={(quality) =>
-                                                    handleQualitySelect(
+                                                    handleResolutionSelect(
                                                       quality,
                                                       episode.ratingKey,
                                                       episode.Media![0].Part[0].key,
@@ -655,7 +655,7 @@ export const MediaDetail: React.FC = () => {
                                         onClick={() => {
                                           // For video content, show quality selector
                                           if (isVideoMedia(media)) {
-                                            openQualitySelector(buttonKey);
+                                            openResolutionSelector(buttonKey);
                                           } else {
                                             // For non-video, direct download
                                             handleDownload(
@@ -691,14 +691,14 @@ export const MediaDetail: React.FC = () => {
                                           />
                                         </div>
                                       )}
-                                      {qualitySelectorOpen === buttonKey && (
-                                        <QualitySelector
+                                      {resolutionSelectorOpen === buttonKey && (
+                                        <ResolutionSelector
                                           ratingKey={ratingKey!}
                                           isOpen={true}
                                           buttonRef={buttonRef}
-                                          onCancel={() => setQualitySelectorOpen(null)}
+                                          onCancel={() => setResolutionSelectorOpen(null)}
                                           onSelect={(quality) =>
-                                            handleQualitySelect(
+                                            handleResolutionSelect(
                                               quality,
                                               ratingKey!,
                                               part.key,
