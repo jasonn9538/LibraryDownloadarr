@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { DatabaseService } from '../models/database';
-import { plexService, QUALITY_PRESETS, getAvailableQualities, QualityPreset } from '../services/plexService';
+import { plexService, QUALITY_PRESETS, getAvailableQualities } from '../services/plexService';
 import { logger } from '../utils/logger';
 import { AuthRequest, createAuthMiddleware } from '../middleware/auth';
 import axios from 'axios';
