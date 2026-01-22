@@ -67,6 +67,10 @@ export const Login: React.FC = () => {
         try {
           const response = await api.authenticatePlexPin(pin.id);
           clearInterval(pollInterval);
+          // Close the Plex auth window
+          if (authWindow && !authWindow.closed) {
+            authWindow.close();
+          }
           setUser(response.user);
           setToken(response.token);
           setIsPlexLoading(false);
@@ -75,6 +79,9 @@ export const Login: React.FC = () => {
           // Check if this is a 403 (access denied) error
           if (err.response?.status === 403) {
             clearInterval(pollInterval);
+            if (authWindow && !authWindow.closed) {
+              authWindow.close();
+            }
             setError(err.response?.data?.error || 'Access denied. You do not have access to this Plex server.');
             setIsPlexLoading(false);
             return;
@@ -83,6 +90,9 @@ export const Login: React.FC = () => {
           // Check if this is a 500 (server error) - likely machine ID not configured
           if (err.response?.status === 500) {
             clearInterval(pollInterval);
+            if (authWindow && !authWindow.closed) {
+              authWindow.close();
+            }
             setError(err.response?.data?.error || 'Server error. Please contact the administrator.');
             setIsPlexLoading(false);
             return;
@@ -91,6 +101,9 @@ export const Login: React.FC = () => {
           // Check for timeout
           if (attempts >= maxAttempts) {
             clearInterval(pollInterval);
+            if (authWindow && !authWindow.closed) {
+              authWindow.close();
+            }
             setError('Plex authentication timeout. Please try again.');
             setIsPlexLoading(false);
           }
