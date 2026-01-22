@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router-dom';
 import { Header } from '../components/Header';
 import { Sidebar } from '../components/Sidebar';
 import { api } from '../services/api';
@@ -10,6 +10,7 @@ import { ResolutionSelector, ResolutionOption } from '../components/ResolutionSe
 
 export const MediaDetail: React.FC = () => {
   const { ratingKey } = useParams<{ ratingKey: string }>();
+  const navigate = useNavigate();
   const { startDownload, downloads } = useDownloads();
   const { isMobileMenuOpen, toggleMobileMenu, closeMobileMenu } = useMobileMenu();
   const [media, setMedia] = useState<MediaItem | null>(null);
@@ -19,6 +20,7 @@ export const MediaDetail: React.FC = () => {
   const [tracks, setTracks] = useState<MediaItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
+  const [transcodeQueued, setTranscodeQueued] = useState<string | null>(null);
 
   // State for resolution selector
   const [resolutionSelectorOpen, setResolutionSelectorOpen] = useState<string | null>(null);
@@ -126,8 +128,22 @@ export const MediaDetail: React.FC = () => {
   ) => {
     setResolutionSelectorOpen(null);
 
-    // Check file size and warn if over 10GB (only for original resolution)
-    if (resolution.isOriginal && fileSize) {
+    // For non-original resolutions, queue for transcoding instead of downloading directly
+    if (!resolution.isOriginal) {
+      try {
+        await api.queueTranscode(itemRatingKey, resolution.id);
+        setTranscodeQueued(itemTitle);
+        // Auto-hide the notification after 5 seconds
+        setTimeout(() => setTranscodeQueued(null), 5000);
+      } catch (err: any) {
+        setError(err.response?.data?.error || 'Failed to queue transcode');
+      }
+      return;
+    }
+
+    // Original resolution - download directly
+    // Check file size and warn if over 10GB
+    if (fileSize) {
       const tenGB = 10737418240;
       if (fileSize > tenGB) {
         const sizeGB = (fileSize / 1073741824).toFixed(2);
@@ -140,18 +156,11 @@ export const MediaDetail: React.FC = () => {
       }
     }
 
-    // Generate appropriate filename for transcoded downloads
-    let downloadFilename = filename;
-    if (!resolution.isOriginal) {
-      const baseName = filename.replace(/\.[^/.]+$/, '');
-      downloadFilename = `${baseName}_${resolution.id}.mp4`;
-    }
-
-    // Use the global download context with resolution options
-    await startDownload(itemRatingKey, partKey, downloadFilename, itemTitle, {
+    // Use the global download context for original resolution
+    await startDownload(itemRatingKey, partKey, filename, itemTitle, {
       resolutionId: resolution.id,
       resolutionLabel: resolution.label,
-      isOriginal: resolution.isOriginal,
+      isOriginal: true,
     });
   };
 
@@ -280,6 +289,29 @@ export const MediaDetail: React.FC = () => {
       <div className="flex flex-1 overflow-hidden">
         <Sidebar isOpen={isMobileMenuOpen} onClose={closeMobileMenu} />
         <main className="flex-1 overflow-y-auto">
+          {/* Transcode queued notification */}
+          {transcodeQueued && (
+            <div className="fixed top-20 left-1/2 transform -translate-x-1/2 z-50 bg-blue-500/90 text-white px-6 py-3 rounded-lg shadow-lg flex items-center gap-3 animate-fade-in">
+              <span>⚙️</span>
+              <div>
+                <div className="font-medium">Transcode queued</div>
+                <div className="text-sm text-blue-100">{transcodeQueued}</div>
+              </div>
+              <button
+                onClick={() => navigate('/transcodes')}
+                className="ml-4 px-3 py-1 bg-white/20 rounded hover:bg-white/30 transition-colors text-sm"
+              >
+                View Queue
+              </button>
+              <button
+                onClick={() => setTranscodeQueued(null)}
+                className="ml-2 text-white/70 hover:text-white"
+              >
+                ✕
+              </button>
+            </div>
+          )}
+
           {/* Backdrop */}
           {backdropUrl && (
             <div

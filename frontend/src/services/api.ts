@@ -256,6 +256,67 @@ class ApiClient {
     const response = await this.client.get('/logs', { params });
     return response.data;
   }
+
+  // Transcode queue endpoints
+  async getTranscodeJobs(): Promise<TranscodeJob[]> {
+    const response = await this.client.get<{ jobs: TranscodeJob[] }>('/transcodes');
+    return response.data.jobs;
+  }
+
+  async getAvailableTranscodes(): Promise<TranscodeJob[]> {
+    const response = await this.client.get<{ jobs: TranscodeJob[] }>('/transcodes/available');
+    return response.data.jobs;
+  }
+
+  async getTranscodeCounts(): Promise<{ pending: number; transcoding: number; completed: number; error: number }> {
+    const response = await this.client.get('/transcodes/counts');
+    return response.data;
+  }
+
+  async getTranscodeJob(jobId: string): Promise<TranscodeJob> {
+    const response = await this.client.get<{ job: TranscodeJob }>(`/transcodes/${jobId}`);
+    return response.data.job;
+  }
+
+  async queueTranscode(ratingKey: string, resolutionId: string): Promise<TranscodeJob> {
+    const response = await this.client.post<{ job: TranscodeJob }>('/transcodes', {
+      ratingKey,
+      resolutionId,
+    });
+    return response.data.job;
+  }
+
+  async cancelTranscode(jobId: string): Promise<void> {
+    await this.client.delete(`/transcodes/${jobId}`);
+  }
+
+  getTranscodeJobDownloadUrl(jobId: string): string {
+    return `/api/transcodes/${jobId}/download`;
+  }
+}
+
+// Transcode job type for frontend
+export interface TranscodeJob {
+  id: string;
+  userId: string;
+  ratingKey: string;
+  resolutionId: string;
+  resolutionLabel?: string;
+  resolutionHeight?: number;
+  maxBitrate?: number;
+  mediaTitle: string;
+  mediaType?: string;
+  filename: string;
+  status: 'pending' | 'transcoding' | 'completed' | 'error' | 'cancelled';
+  progress: number;
+  outputPath?: string;
+  fileSize?: number;
+  error?: string;
+  createdAt: number;
+  startedAt?: number;
+  completedAt?: number;
+  expiresAt?: number;
+  username?: string;
 }
 
 export const api = new ApiClient();

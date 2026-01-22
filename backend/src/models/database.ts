@@ -39,6 +39,32 @@ export interface Settings {
   updatedAt: number;
 }
 
+export type TranscodeJobStatus = 'pending' | 'transcoding' | 'completed' | 'error' | 'cancelled';
+
+export interface TranscodeJob {
+  id: string;
+  userId: string;
+  ratingKey: string;
+  resolutionId: string;
+  resolutionLabel?: string;
+  resolutionHeight?: number;
+  maxBitrate?: number;
+  mediaTitle: string;
+  mediaType?: string;
+  filename: string;
+  status: TranscodeJobStatus;
+  progress: number;
+  outputPath?: string;
+  fileSize?: number;
+  error?: string;
+  createdAt: number;
+  startedAt?: number;
+  completedAt?: number;
+  expiresAt?: number;
+  // Joined fields
+  username?: string;
+}
+
 export class DatabaseService {
   private db: Database.Database;
 
@@ -138,6 +164,38 @@ export class DatabaseService {
         file_size INTEGER,
         downloaded_at INTEGER NOT NULL
       )
+    `);
+
+    // Transcode jobs table - persistent transcode queue
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS transcode_jobs (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        rating_key TEXT NOT NULL,
+        resolution_id TEXT NOT NULL,
+        resolution_label TEXT,
+        resolution_height INTEGER,
+        max_bitrate INTEGER,
+        media_title TEXT NOT NULL,
+        media_type TEXT,
+        filename TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        progress INTEGER DEFAULT 0,
+        output_path TEXT,
+        file_size INTEGER,
+        error TEXT,
+        created_at INTEGER NOT NULL,
+        started_at INTEGER,
+        completed_at INTEGER,
+        expires_at INTEGER
+      )
+    `);
+
+    // Create index for faster lookups
+    this.db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_transcode_jobs_user_id ON transcode_jobs(user_id);
+      CREATE INDEX IF NOT EXISTS idx_transcode_jobs_status ON transcode_jobs(status);
+      CREATE INDEX IF NOT EXISTS idx_transcode_jobs_rating_key_resolution ON transcode_jobs(rating_key, resolution_id);
     `);
 
     logger.info('Database tables initialized');
@@ -321,6 +379,250 @@ export class DatabaseService {
 
     const stmt = this.db.prepare(query);
     return stmt.get(...params);
+  }
+
+  // Transcode job operations
+  createTranscodeJob(job: Omit<TranscodeJob, 'id' | 'createdAt' | 'progress' | 'status'>): TranscodeJob {
+    const id = this.generateId();
+    const createdAt = Date.now();
+
+    const stmt = this.db.prepare(`
+      INSERT INTO transcode_jobs (
+        id, user_id, rating_key, resolution_id, resolution_label, resolution_height,
+        max_bitrate, media_title, media_type, filename, status, progress, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?)
+    `);
+
+    stmt.run(
+      id, job.userId, job.ratingKey, job.resolutionId, job.resolutionLabel,
+      job.resolutionHeight, job.maxBitrate, job.mediaTitle, job.mediaType,
+      job.filename, createdAt
+    );
+
+    return {
+      ...job,
+      id,
+      status: 'pending',
+      progress: 0,
+      createdAt,
+    };
+  }
+
+  getTranscodeJob(id: string): TranscodeJob | undefined {
+    const stmt = this.db.prepare(`
+      SELECT tj.*,
+             COALESCE(au.username, pu.username) as username
+      FROM transcode_jobs tj
+      LEFT JOIN admin_users au ON tj.user_id = au.id
+      LEFT JOIN plex_users pu ON tj.user_id = pu.id
+      WHERE tj.id = ?
+    `);
+    const row = stmt.get(id) as any;
+    return row ? this.mapTranscodeJob(row) : undefined;
+  }
+
+  getTranscodeJobByCacheKey(ratingKey: string, resolutionId: string): TranscodeJob | undefined {
+    // Get most recent job for this cache key that's not cancelled/error
+    const stmt = this.db.prepare(`
+      SELECT tj.*,
+             COALESCE(au.username, pu.username) as username
+      FROM transcode_jobs tj
+      LEFT JOIN admin_users au ON tj.user_id = au.id
+      LEFT JOIN plex_users pu ON tj.user_id = pu.id
+      WHERE tj.rating_key = ? AND tj.resolution_id = ?
+        AND tj.status IN ('pending', 'transcoding', 'completed')
+        AND (tj.expires_at IS NULL OR tj.expires_at > ?)
+      ORDER BY tj.created_at DESC
+      LIMIT 1
+    `);
+    const row = stmt.get(ratingKey, resolutionId, Date.now()) as any;
+    return row ? this.mapTranscodeJob(row) : undefined;
+  }
+
+  getUserTranscodeJobs(userId: string): TranscodeJob[] {
+    const stmt = this.db.prepare(`
+      SELECT tj.*,
+             COALESCE(au.username, pu.username) as username
+      FROM transcode_jobs tj
+      LEFT JOIN admin_users au ON tj.user_id = au.id
+      LEFT JOIN plex_users pu ON tj.user_id = pu.id
+      WHERE tj.user_id = ?
+        AND (tj.expires_at IS NULL OR tj.expires_at > ? OR tj.status NOT IN ('completed', 'error', 'cancelled'))
+      ORDER BY tj.created_at DESC
+    `);
+    const rows = stmt.all(userId, Date.now()) as any[];
+    return rows.map(row => this.mapTranscodeJob(row));
+  }
+
+  getAllAvailableTranscodes(): TranscodeJob[] {
+    // Get all completed transcodes that haven't expired (for the "all available" toggle)
+    const stmt = this.db.prepare(`
+      SELECT tj.*,
+             COALESCE(au.username, pu.username) as username
+      FROM transcode_jobs tj
+      LEFT JOIN admin_users au ON tj.user_id = au.id
+      LEFT JOIN plex_users pu ON tj.user_id = pu.id
+      WHERE tj.status = 'completed'
+        AND (tj.expires_at IS NULL OR tj.expires_at > ?)
+      ORDER BY tj.created_at DESC
+    `);
+    const rows = stmt.all(Date.now()) as any[];
+    return rows.map(row => this.mapTranscodeJob(row));
+  }
+
+  getPendingTranscodeJobs(limit: number = 10): TranscodeJob[] {
+    const stmt = this.db.prepare(`
+      SELECT tj.*,
+             COALESCE(au.username, pu.username) as username
+      FROM transcode_jobs tj
+      LEFT JOIN admin_users au ON tj.user_id = au.id
+      LEFT JOIN plex_users pu ON tj.user_id = pu.id
+      WHERE tj.status = 'pending'
+      ORDER BY tj.created_at ASC
+      LIMIT ?
+    `);
+    const rows = stmt.all(limit) as any[];
+    return rows.map(row => this.mapTranscodeJob(row));
+  }
+
+  getActiveTranscodeJobs(): TranscodeJob[] {
+    const stmt = this.db.prepare(`
+      SELECT tj.*,
+             COALESCE(au.username, pu.username) as username
+      FROM transcode_jobs tj
+      LEFT JOIN admin_users au ON tj.user_id = au.id
+      LEFT JOIN plex_users pu ON tj.user_id = pu.id
+      WHERE tj.status = 'transcoding'
+      ORDER BY tj.started_at ASC
+    `);
+    const rows = stmt.all() as any[];
+    return rows.map(row => this.mapTranscodeJob(row));
+  }
+
+  updateTranscodeJobStatus(id: string, status: TranscodeJobStatus, updates?: Partial<TranscodeJob>): void {
+    let query = 'UPDATE transcode_jobs SET status = ?';
+    const params: any[] = [status];
+
+    if (updates?.progress !== undefined) {
+      query += ', progress = ?';
+      params.push(updates.progress);
+    }
+    if (updates?.outputPath !== undefined) {
+      query += ', output_path = ?';
+      params.push(updates.outputPath);
+    }
+    if (updates?.fileSize !== undefined) {
+      query += ', file_size = ?';
+      params.push(updates.fileSize);
+    }
+    if (updates?.error !== undefined) {
+      query += ', error = ?';
+      params.push(updates.error);
+    }
+    if (updates?.startedAt !== undefined) {
+      query += ', started_at = ?';
+      params.push(updates.startedAt);
+    }
+    if (updates?.completedAt !== undefined) {
+      query += ', completed_at = ?';
+      params.push(updates.completedAt);
+    }
+    if (updates?.expiresAt !== undefined) {
+      query += ', expires_at = ?';
+      params.push(updates.expiresAt);
+    }
+
+    query += ' WHERE id = ?';
+    params.push(id);
+
+    const stmt = this.db.prepare(query);
+    stmt.run(...params);
+  }
+
+  updateTranscodeJobProgress(id: string, progress: number): void {
+    const stmt = this.db.prepare('UPDATE transcode_jobs SET progress = ? WHERE id = ?');
+    stmt.run(progress, id);
+  }
+
+  deleteTranscodeJob(id: string): void {
+    const stmt = this.db.prepare('DELETE FROM transcode_jobs WHERE id = ?');
+    stmt.run(id);
+  }
+
+  cleanupExpiredTranscodeJobs(): TranscodeJob[] {
+    // Get expired jobs that need file cleanup
+    const stmt = this.db.prepare(`
+      SELECT * FROM transcode_jobs
+      WHERE status = 'completed' AND expires_at IS NOT NULL AND expires_at <= ?
+    `);
+    const expiredJobs = stmt.all(Date.now()) as any[];
+    const jobs = expiredJobs.map((row: any) => this.mapTranscodeJob(row));
+
+    // Delete them from database
+    if (expiredJobs.length > 0) {
+      const deleteStmt = this.db.prepare(`
+        DELETE FROM transcode_jobs
+        WHERE status = 'completed' AND expires_at IS NOT NULL AND expires_at <= ?
+      `);
+      const result = deleteStmt.run(Date.now());
+      if (result.changes > 0) {
+        logger.info(`Cleaned up ${result.changes} expired transcode jobs from database`);
+      }
+    }
+
+    return jobs;
+  }
+
+  getTranscodeJobCounts(userId?: string): { pending: number; transcoding: number; completed: number; error: number } {
+    let query = `
+      SELECT status, COUNT(*) as count
+      FROM transcode_jobs
+      WHERE (expires_at IS NULL OR expires_at > ? OR status NOT IN ('completed', 'error', 'cancelled'))
+    `;
+    const params: any[] = [Date.now()];
+
+    if (userId) {
+      query += ' AND user_id = ?';
+      params.push(userId);
+    }
+
+    query += ' GROUP BY status';
+
+    const stmt = this.db.prepare(query);
+    const rows = stmt.all(...params) as { status: string; count: number }[];
+
+    const counts = { pending: 0, transcoding: 0, completed: 0, error: 0 };
+    for (const row of rows) {
+      if (row.status in counts) {
+        counts[row.status as keyof typeof counts] = row.count;
+      }
+    }
+    return counts;
+  }
+
+  private mapTranscodeJob(row: any): TranscodeJob {
+    return {
+      id: row.id,
+      userId: row.user_id,
+      ratingKey: row.rating_key,
+      resolutionId: row.resolution_id,
+      resolutionLabel: row.resolution_label,
+      resolutionHeight: row.resolution_height,
+      maxBitrate: row.max_bitrate,
+      mediaTitle: row.media_title,
+      mediaType: row.media_type,
+      filename: row.filename,
+      status: row.status,
+      progress: row.progress,
+      outputPath: row.output_path,
+      fileSize: row.file_size,
+      error: row.error,
+      createdAt: row.created_at,
+      startedAt: row.started_at,
+      completedAt: row.completed_at,
+      expiresAt: row.expires_at,
+      username: row.username,
+    };
   }
 
   // Utility methods

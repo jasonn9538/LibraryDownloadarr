@@ -2,37 +2,38 @@ import { spawn, ChildProcess } from 'child_process';
 import { Response } from 'express';
 import fs from 'fs';
 import path from 'path';
+import axios from 'axios';
+import https from 'https';
 import { logger } from '../utils/logger';
+import { DatabaseService, TranscodeJob, TranscodeJobStatus } from '../models/database';
+import { plexService, RESOLUTION_PRESETS } from './plexService';
 
 // Directory for cached transcodes - configurable via environment variable
 const CACHE_DIR = process.env.TRANSCODE_DIR || '/app/transcode';
-const CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
+const CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 1 week
+const MAX_CONCURRENT_TRANSCODES = parseInt(process.env.MAX_CONCURRENT_TRANSCODES || '2', 10);
 
-interface TranscodeJob {
-  cacheKey: string;
-  ratingKey: string;
-  resolutionId: string;
-  ffmpegProcess: ChildProcess | null;
-  outputPath: string;
-  progress: number; // 0-100
-  totalDuration: number; // in seconds
-  status: 'transcoding' | 'completed' | 'error';
-  error?: string;
+// HTTPS agent that bypasses SSL certificate validation for local Plex servers
+const httpsAgent = new https.Agent({
+  rejectUnauthorized: false
+});
+
+interface ActiveTranscode {
+  jobId: string;
+  ffmpegProcess: ChildProcess;
   subscribers: Set<Response>;
-  createdAt: number;
-  bytesWritten: number;
 }
 
 class TranscodeManager {
-  private jobs: Map<string, TranscodeJob> = new Map();
+  private db: DatabaseService | null = null;
+  private activeTranscodes: Map<string, ActiveTranscode> = new Map();
   private cleanupInterval: NodeJS.Timeout | null = null;
+  private workerInterval: NodeJS.Timeout | null = null;
   private initialized: boolean = false;
 
-  constructor() {
-    this.initialize();
-  }
+  initialize(db: DatabaseService): void {
+    this.db = db;
 
-  private initialize(): void {
     // Check if transcode directory is configured
     if (!process.env.TRANSCODE_DIR) {
       logger.warn('TRANSCODE_DIR not configured, using default: /app/transcode');
@@ -44,7 +45,7 @@ class TranscodeManager {
         fs.mkdirSync(CACHE_DIR, { recursive: true });
       }
       this.initialized = true;
-      logger.info('Transcode manager initialized', { cacheDir: CACHE_DIR });
+      logger.info('Transcode manager initialized', { cacheDir: CACHE_DIR, maxConcurrent: MAX_CONCURRENT_TRANSCODES });
     } catch (err) {
       logger.error('Failed to create transcode directory', {
         cacheDir: CACHE_DIR,
@@ -54,11 +55,40 @@ class TranscodeManager {
       return;
     }
 
-    // Start cleanup interval
-    this.cleanupInterval = setInterval(() => this.cleanupOldFiles(), 5 * 60 * 1000); // Every 5 minutes
+    // Mark any "transcoding" jobs as pending on startup (server restart recovery)
+    this.recoverInterruptedJobs();
 
-    // Clean up on startup
-    this.cleanupOldFiles();
+    // Start background worker to process queue
+    this.workerInterval = setInterval(() => this.processQueue(), 5000); // Check every 5 seconds
+
+    // Start cleanup interval
+    this.cleanupInterval = setInterval(() => this.cleanupExpiredFiles(), 5 * 60 * 1000); // Every 5 minutes
+
+    // Initial cleanup
+    this.cleanupExpiredFiles();
+
+    // Start processing queue immediately
+    this.processQueue();
+  }
+
+  private recoverInterruptedJobs(): void {
+    if (!this.db) return;
+
+    // Reset any "transcoding" jobs back to "pending" (server crashed mid-transcode)
+    const activeJobs = this.db.getActiveTranscodeJobs();
+    for (const job of activeJobs) {
+      logger.info('Recovering interrupted transcode job', { jobId: job.id, title: job.mediaTitle });
+      this.db.updateTranscodeJobStatus(job.id, 'pending', { startedAt: undefined });
+
+      // Clean up partial file if exists
+      if (job.outputPath && fs.existsSync(job.outputPath)) {
+        try {
+          fs.unlinkSync(job.outputPath);
+        } catch {
+          // Ignore
+        }
+      }
+    }
   }
 
   isInitialized(): boolean {
@@ -73,302 +103,154 @@ class TranscodeManager {
     return `${ratingKey}-${resolutionId}`;
   }
 
-  getJob(cacheKey: string): TranscodeJob | undefined {
-    return this.jobs.get(cacheKey);
-  }
-
-  getProgress(cacheKey: string): { progress: number; status: string } | null {
-    const job = this.jobs.get(cacheKey);
-    if (!job) return null;
-    return { progress: job.progress, status: job.status };
-  }
-
   /**
-   * Start or join a transcode job
-   * Returns the job for the caller to subscribe to
+   * Queue a new transcode job
    */
-  async startOrJoinTranscode(
+  queueTranscode(
+    userId: string,
     ratingKey: string,
     resolutionId: string,
+    resolutionLabel: string,
     resolutionHeight: number,
     maxBitrate: number,
-    totalDuration: number, // in milliseconds from Plex
-    inputStream: NodeJS.ReadableStream,
-    _filename: string // Prefixed with _ to indicate intentionally unused
-  ): Promise<TranscodeJob> {
-    if (!this.initialized) {
-      throw new Error('Transcode manager not initialized - check TRANSCODE_DIR configuration');
+    mediaTitle: string,
+    mediaType: string,
+    filename: string
+  ): TranscodeJob {
+    if (!this.db) {
+      throw new Error('Transcode manager not initialized');
     }
 
-    const cacheKey = this.getCacheKey(ratingKey, resolutionId);
-    const existingJob = this.jobs.get(cacheKey);
-
-    // If job exists and is completed, return it (cached file)
-    if (existingJob && existingJob.status === 'completed') {
-      logger.info('Serving cached transcode', { cacheKey });
+    // Check if there's already a job for this cache key
+    const existingJob = this.db.getTranscodeJobByCacheKey(ratingKey, resolutionId);
+    if (existingJob) {
+      logger.info('Transcode job already exists', { jobId: existingJob.id, status: existingJob.status });
       return existingJob;
     }
 
-    // If job exists and is transcoding, return it (join existing)
-    if (existingJob && existingJob.status === 'transcoding') {
-      logger.info('Joining existing transcode', { cacheKey, subscribers: existingJob.subscribers.size + 1 });
-      return existingJob;
-    }
-
-    // Start new transcode job
-    const outputPath = path.join(CACHE_DIR, `${cacheKey}-${Date.now()}.mp4`);
-    const durationSeconds = totalDuration / 1000;
-
-    const job: TranscodeJob = {
-      cacheKey,
+    // Create new job
+    const job = this.db.createTranscodeJob({
+      userId,
       ratingKey,
       resolutionId,
-      ffmpegProcess: null,
-      outputPath,
-      progress: 0,
-      totalDuration: durationSeconds,
-      status: 'transcoding',
-      subscribers: new Set(),
-      createdAt: Date.now(),
-      bytesWritten: 0,
-    };
-
-    this.jobs.set(cacheKey, job);
-
-    // Build ffmpeg arguments - optimized for speed
-    // Using software encoding with ultrafast preset
-    // Hardware acceleration (VAAPI) has issues with piped input, so we use CPU
-    const ffmpegArgs = [
-      '-i', 'pipe:0',
-      '-vf', `scale=-2:${resolutionHeight}`,
-      '-c:v', 'libx264',
-      '-preset', 'ultrafast',
-      '-tune', 'fastdecode',
-      '-crf', '28',
-      '-maxrate', `${maxBitrate}k`,
-      '-bufsize', `${maxBitrate * 2}k`,
-      '-c:a', 'aac',
-      '-b:a', '128k',
-      '-ac', '2',
-      '-threads', '0', // Use all CPU cores
-      '-movflags', 'frag_keyframe+empty_moov',
-      '-f', 'mp4',
-      '-y',
-      outputPath
-    ];
-
-    logger.info('Starting transcode', {
-      cacheKey,
-      outputPath,
-      resolution: resolutionHeight,
-      duration: durationSeconds,
+      resolutionLabel,
+      resolutionHeight,
+      maxBitrate,
+      mediaTitle,
+      mediaType,
+      filename,
     });
 
-    const ffmpeg = spawn('ffmpeg', ffmpegArgs, {
-      stdio: ['pipe', 'pipe', 'pipe']
+    logger.info('Transcode job queued', {
+      jobId: job.id,
+      title: mediaTitle,
+      resolution: resolutionLabel,
+      userId,
     });
 
-    job.ffmpegProcess = ffmpeg;
-
-    // Parse ffmpeg stderr for progress
-    ffmpeg.stderr.on('data', (data: Buffer) => {
-      const output = data.toString();
-
-      // Parse time= from ffmpeg output (format: time=HH:MM:SS.ms or time=SS.ms)
-      const timeMatch = output.match(/time=(\d+):(\d+):(\d+\.\d+)/);
-      if (timeMatch && job.totalDuration > 0) {
-        const hours = parseInt(timeMatch[1]);
-        const minutes = parseInt(timeMatch[2]);
-        const seconds = parseFloat(timeMatch[3]);
-        const currentTime = hours * 3600 + minutes * 60 + seconds;
-        job.progress = Math.min(99, Math.round((currentTime / job.totalDuration) * 100));
-      }
-    });
-
-    // Track file size as it's written
-    const checkFileSize = setInterval(() => {
-      if (fs.existsSync(outputPath)) {
-        try {
-          const stats = fs.statSync(outputPath);
-          job.bytesWritten = stats.size;
-        } catch {
-          // File might be in use
-        }
-      }
-    }, 500);
-
-    ffmpeg.on('error', (err) => {
-      clearInterval(checkFileSize);
-      logger.error('ffmpeg process error', { error: err.message, cacheKey });
-      job.status = 'error';
-      job.error = err.message;
-      this.notifySubscribersOfError(job);
-    });
-
-    ffmpeg.on('close', (code) => {
-      clearInterval(checkFileSize);
-      if (code === 0) {
-        job.status = 'completed';
-        job.progress = 100;
-        logger.info('Transcode completed', { cacheKey, outputPath });
-        this.notifySubscribersOfCompletion();
-      } else if (job.status !== 'error') {
-        job.status = 'error';
-        job.error = `ffmpeg exited with code ${code}`;
-        logger.error('ffmpeg exited with error', { code, cacheKey });
-        this.notifySubscribersOfError(job);
-      }
-    });
-
-    // Pipe input stream to ffmpeg
-    inputStream.pipe(ffmpeg.stdin);
-
-    inputStream.on('error', (err) => {
-      logger.error('Input stream error', { error: err.message, cacheKey });
-      ffmpeg.kill('SIGTERM');
-    });
-
-    ffmpeg.stdin.on('error', (err: NodeJS.ErrnoException) => {
-      if (err.code !== 'EPIPE') {
-        logger.error('ffmpeg stdin error', { error: err.message, cacheKey });
-      }
-    });
+    // Trigger queue processing
+    this.processQueue();
 
     return job;
   }
 
   /**
-   * Subscribe a response to a transcode job
-   * Streams the output file as it's being written
+   * Get a transcode job by ID
    */
-  subscribeToJob(job: TranscodeJob, res: Response, filename: string): void {
-    job.subscribers.add(res);
-
-    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-    res.setHeader('Content-Type', 'video/mp4');
-
-    // Handle client disconnect
-    res.on('close', () => {
-      job.subscribers.delete(res);
-      logger.info('Subscriber disconnected', {
-        cacheKey: job.cacheKey,
-        remainingSubscribers: job.subscribers.size
-      });
-
-      // If no subscribers left and still transcoding, consider killing
-      if (job.subscribers.size === 0 && job.status === 'transcoding') {
-        // Give a grace period in case someone reconnects
-        setTimeout(() => {
-          if (job.subscribers.size === 0 && job.status === 'transcoding') {
-            logger.info('No subscribers, killing transcode', { cacheKey: job.cacheKey });
-            this.cancelJob(job.cacheKey);
-          }
-        }, 10000); // 10 second grace period
-      }
-    });
-
-    // If already completed, stream the cached file
-    if (job.status === 'completed' && fs.existsSync(job.outputPath)) {
-      const stats = fs.statSync(job.outputPath);
-      res.setHeader('Content-Length', stats.size);
-      const readStream = fs.createReadStream(job.outputPath);
-      readStream.pipe(res);
-      return;
-    }
-
-    // Stream the file as it's being written
-    this.streamFileAsWritten(job, res);
+  getJob(jobId: string): TranscodeJob | undefined {
+    if (!this.db) return undefined;
+    return this.db.getTranscodeJob(jobId);
   }
 
   /**
-   * Stream a file to response as it's being written by ffmpeg
+   * Get job by cache key (ratingKey + resolutionId)
    */
-  private streamFileAsWritten(job: TranscodeJob, res: Response): void {
-    let bytesSent = 0;
-    let checkInterval: NodeJS.Timeout;
-
-    const sendMoreData = () => {
-      if (!fs.existsSync(job.outputPath)) return;
-
-      try {
-        const stats = fs.statSync(job.outputPath);
-        const fileSize = stats.size;
-
-        if (fileSize > bytesSent) {
-          const readStream = fs.createReadStream(job.outputPath, {
-            start: bytesSent,
-            end: fileSize - 1
-          });
-
-          readStream.on('data', (chunk: Buffer | string) => {
-            if (!res.writableEnded) {
-              res.write(chunk);
-              bytesSent += typeof chunk === 'string' ? Buffer.byteLength(chunk) : chunk.length;
-            }
-          });
-
-          readStream.on('end', () => {
-            // Check if transcode is complete
-            if (job.status === 'completed' && bytesSent >= fileSize) {
-              clearInterval(checkInterval);
-              res.end();
-            }
-          });
-
-          readStream.on('error', (err) => {
-            logger.error('Read stream error', { error: err.message });
-          });
-        } else if (job.status === 'completed') {
-          // Transcode done and all data sent
-          clearInterval(checkInterval);
-          res.end();
-        } else if (job.status === 'error') {
-          clearInterval(checkInterval);
-          if (!res.writableEnded) {
-            res.end();
-          }
-        }
-      } catch {
-        // File might be in use, try again next interval
-      }
-    };
-
-    // Check for new data every 500ms
-    checkInterval = setInterval(sendMoreData, 500);
-    sendMoreData(); // Initial check
-
-    // Cleanup on response close
-    res.on('close', () => {
-      clearInterval(checkInterval);
-    });
+  getJobByCacheKey(ratingKey: string, resolutionId: string): TranscodeJob | undefined {
+    if (!this.db) return undefined;
+    return this.db.getTranscodeJobByCacheKey(ratingKey, resolutionId);
   }
 
-  private notifySubscribersOfCompletion(): void {
-    // Subscribers are already streaming, they'll get the rest of the file
+  /**
+   * Get all jobs for a user
+   */
+  getUserJobs(userId: string): TranscodeJob[] {
+    if (!this.db) return [];
+    return this.db.getUserTranscodeJobs(userId);
   }
 
-  private notifySubscribersOfError(job: TranscodeJob): void {
-    for (const res of job.subscribers) {
-      if (!res.writableEnded) {
-        res.end();
-      }
-    }
-    job.subscribers.clear();
+  /**
+   * Get all available completed transcodes (for "all available" toggle)
+   */
+  getAllAvailableTranscodes(): TranscodeJob[] {
+    if (!this.db) return [];
+    return this.db.getAllAvailableTranscodes();
+  }
+
+  /**
+   * Get job counts for badge display
+   */
+  getJobCounts(userId?: string): { pending: number; transcoding: number; completed: number; error: number } {
+    if (!this.db) return { pending: 0, transcoding: 0, completed: 0, error: 0 };
+    return this.db.getTranscodeJobCounts(userId);
   }
 
   /**
    * Cancel a transcode job
    */
-  cancelJob(cacheKey: string): void {
-    const job = this.jobs.get(cacheKey);
-    if (!job) return;
+  cancelJob(jobId: string): boolean {
+    if (!this.db) return false;
 
-    if (job.ffmpegProcess && !job.ffmpegProcess.killed) {
-      job.ffmpegProcess.kill('SIGTERM');
+    const job = this.db.getTranscodeJob(jobId);
+    if (!job) return false;
+
+    // Kill ffmpeg process if active
+    const cacheKey = this.getCacheKey(job.ratingKey, job.resolutionId);
+    const active = this.activeTranscodes.get(cacheKey);
+    if (active && active.jobId === jobId) {
+      if (!active.ffmpegProcess.killed) {
+        active.ffmpegProcess.kill('SIGTERM');
+      }
+      // Notify subscribers
+      for (const res of active.subscribers) {
+        if (!res.writableEnded) {
+          res.end();
+        }
+      }
+      this.activeTranscodes.delete(cacheKey);
     }
 
     // Clean up file
-    if (fs.existsSync(job.outputPath)) {
+    if (job.outputPath && fs.existsSync(job.outputPath)) {
+      try {
+        fs.unlinkSync(job.outputPath);
+      } catch {
+        logger.warn('Failed to delete transcode file on cancel', { path: job.outputPath });
+      }
+    }
+
+    // Update status
+    this.db.updateTranscodeJobStatus(jobId, 'cancelled');
+    logger.info('Transcode job cancelled', { jobId });
+
+    return true;
+  }
+
+  /**
+   * Delete a completed job (removes file and database record)
+   */
+  deleteJob(jobId: string): boolean {
+    if (!this.db) return false;
+
+    const job = this.db.getTranscodeJob(jobId);
+    if (!job) return false;
+
+    // Can only delete completed, error, or cancelled jobs
+    if (job.status === 'pending' || job.status === 'transcoding') {
+      return this.cancelJob(jobId);
+    }
+
+    // Clean up file
+    if (job.outputPath && fs.existsSync(job.outputPath)) {
       try {
         fs.unlinkSync(job.outputPath);
       } catch {
@@ -376,38 +258,310 @@ class TranscodeManager {
       }
     }
 
-    this.jobs.delete(cacheKey);
-    logger.info('Transcode job cancelled', { cacheKey });
+    // Delete from database
+    this.db.deleteTranscodeJob(jobId);
+    logger.info('Transcode job deleted', { jobId });
+
+    return true;
   }
 
   /**
-   * Clean up old cached files (older than 1 hour)
+   * Download a completed transcode
    */
-  private cleanupOldFiles(): void {
-    if (!this.initialized) return;
+  streamCompletedJob(jobId: string, res: Response): boolean {
+    if (!this.db) return false;
 
-    const now = Date.now();
+    const job = this.db.getTranscodeJob(jobId);
+    if (!job || job.status !== 'completed' || !job.outputPath) {
+      return false;
+    }
 
-    // Clean up completed jobs older than TTL
-    for (const [key, job] of this.jobs) {
-      if (job.status === 'completed' && (now - job.createdAt) > CACHE_TTL_MS) {
-        logger.info('Cleaning up old transcode cache', { cacheKey: key, age: now - job.createdAt });
+    if (!fs.existsSync(job.outputPath)) {
+      logger.error('Transcode file missing', { jobId, path: job.outputPath });
+      return false;
+    }
 
-        if (fs.existsSync(job.outputPath)) {
-          try {
-            fs.unlinkSync(job.outputPath);
-          } catch {
-            logger.warn('Failed to delete old transcode file', { path: job.outputPath });
+    const stats = fs.statSync(job.outputPath);
+    res.setHeader('Content-Disposition', `attachment; filename="${job.filename}"`);
+    res.setHeader('Content-Type', 'video/mp4');
+    res.setHeader('Content-Length', stats.size);
+
+    const readStream = fs.createReadStream(job.outputPath);
+    readStream.pipe(res);
+
+    logger.info('Streaming completed transcode', { jobId, filename: job.filename });
+    return true;
+  }
+
+  /**
+   * Process the transcode queue
+   */
+  private async processQueue(): Promise<void> {
+    if (!this.db || !this.initialized) return;
+
+    // Check how many transcodes are currently active
+    const activeCount = this.activeTranscodes.size;
+    if (activeCount >= MAX_CONCURRENT_TRANSCODES) {
+      return;
+    }
+
+    // Get pending jobs
+    const pendingJobs = this.db.getPendingTranscodeJobs(MAX_CONCURRENT_TRANSCODES - activeCount);
+
+    for (const job of pendingJobs) {
+      // Double-check we don't already have this active
+      const cacheKey = this.getCacheKey(job.ratingKey, job.resolutionId);
+      if (this.activeTranscodes.has(cacheKey)) {
+        continue;
+      }
+
+      // Start this transcode
+      this.startTranscode(job);
+    }
+  }
+
+  /**
+   * Start transcoding a job
+   */
+  private async startTranscode(job: TranscodeJob): Promise<void> {
+    if (!this.db) return;
+
+    const cacheKey = this.getCacheKey(job.ratingKey, job.resolutionId);
+    const outputPath = path.join(CACHE_DIR, `${cacheKey}-${Date.now()}.mp4`);
+
+    // Update job status
+    this.db.updateTranscodeJobStatus(job.id, 'transcoding', {
+      startedAt: Date.now(),
+      outputPath,
+    });
+
+    logger.info('Starting transcode', {
+      jobId: job.id,
+      cacheKey,
+      resolution: job.resolutionLabel,
+      title: job.mediaTitle,
+    });
+
+    try {
+      // Get Plex credentials from settings
+      const serverUrl = this.db.getSetting('plex_url');
+      const token = this.db.getSetting('plex_token');
+
+      if (!serverUrl || !token) {
+        throw new Error('Plex server not configured');
+      }
+
+      // Get media metadata to find the part key
+      plexService.setServerConnection(serverUrl, token);
+      const metadata = await plexService.getMediaMetadata(job.ratingKey, token);
+
+      const partKey = metadata.Media?.[0]?.Part?.[0]?.key;
+      if (!partKey) {
+        throw new Error('Media file not found');
+      }
+
+      const totalDuration = metadata.Media?.[0]?.duration || 0;
+
+      // Get direct download URL
+      const downloadUrl = plexService.getDirectDownloadUrl(partKey, token);
+
+      // Fetch the file from Plex
+      const plexResponse = await axios({
+        method: 'GET',
+        url: downloadUrl,
+        responseType: 'stream',
+        httpsAgent,
+      });
+
+      // Build ffmpeg arguments - optimized for speed + compatibility + reasonable file size
+      const ffmpegArgs = [
+        '-i', 'pipe:0',
+        // Video settings
+        '-vf', `scale=-2:${job.resolutionHeight}`,
+        '-c:v', 'libx264',
+        '-preset', 'fast',           // Balance of speed and compression (better than ultrafast)
+        '-tune', 'film',             // Good for most video content
+        '-profile:v', 'main',        // Main profile for wide compatibility
+        '-level', '4.0',             // Level 4.0 supports up to 1080p on most devices
+        '-pix_fmt', 'yuv420p',       // Required for maximum compatibility
+        '-crf', '23',                // Better quality/size balance (lower = better quality)
+        '-maxrate', `${job.maxBitrate}k`,
+        '-bufsize', `${(job.maxBitrate || 4000) * 2}k`,
+        // Audio settings
+        '-c:a', 'aac',
+        '-b:a', '128k',
+        '-ac', '2',                  // Stereo audio
+        '-ar', '48000',              // Standard sample rate
+        // Performance
+        '-threads', '0',             // Use all CPU cores
+        // Output format - use faststart for better streaming/seeking
+        '-movflags', '+faststart',
+        '-f', 'mp4',
+        '-y',
+        outputPath
+      ];
+
+      const ffmpeg = spawn('ffmpeg', ffmpegArgs, {
+        stdio: ['pipe', 'pipe', 'pipe']
+      });
+
+      // Track this as active
+      const activeTranscode: ActiveTranscode = {
+        jobId: job.id,
+        ffmpegProcess: ffmpeg,
+        subscribers: new Set(),
+      };
+      this.activeTranscodes.set(cacheKey, activeTranscode);
+
+      // Parse ffmpeg stderr for progress
+      const durationSeconds = totalDuration / 1000;
+      ffmpeg.stderr.on('data', (data: Buffer) => {
+        const output = data.toString();
+
+        // Parse time= from ffmpeg output
+        const timeMatch = output.match(/time=(\\d+):(\\d+):(\\d+\\.\\d+)/);
+        if (timeMatch && durationSeconds > 0) {
+          const hours = parseInt(timeMatch[1]);
+          const minutes = parseInt(timeMatch[2]);
+          const seconds = parseFloat(timeMatch[3]);
+          const currentTime = hours * 3600 + minutes * 60 + seconds;
+          const progress = Math.min(99, Math.round((currentTime / durationSeconds) * 100));
+
+          // Update database (throttled)
+          if (this.db) {
+            this.db.updateTranscodeJobProgress(job.id, progress);
           }
         }
+      });
 
-        this.jobs.delete(key);
+      ffmpeg.on('error', (err) => {
+        logger.error('ffmpeg process error', { error: err.message, jobId: job.id });
+        this.handleTranscodeError(job.id, cacheKey, err.message);
+      });
+
+      ffmpeg.on('close', (code) => {
+        if (code === 0) {
+          this.handleTranscodeComplete(job.id, cacheKey, outputPath);
+        } else {
+          const currentJob = this.db?.getTranscodeJob(job.id);
+          if (currentJob?.status !== 'cancelled') {
+            this.handleTranscodeError(job.id, cacheKey, `ffmpeg exited with code ${code}`);
+          }
+        }
+      });
+
+      // Pipe input stream to ffmpeg
+      plexResponse.data.pipe(ffmpeg.stdin);
+
+      plexResponse.data.on('error', (err: Error) => {
+        logger.error('Input stream error', { error: err.message, jobId: job.id });
+        ffmpeg.kill('SIGTERM');
+      });
+
+      ffmpeg.stdin.on('error', (err: NodeJS.ErrnoException) => {
+        if (err.code !== 'EPIPE') {
+          logger.error('ffmpeg stdin error', { error: err.message, jobId: job.id });
+        }
+      });
+
+    } catch (error: any) {
+      logger.error('Failed to start transcode', {
+        jobId: job.id,
+        error: error.message,
+      });
+      this.handleTranscodeError(job.id, cacheKey, error.message);
+    }
+  }
+
+  private handleTranscodeComplete(jobId: string, cacheKey: string, outputPath: string): void {
+    if (!this.db) return;
+
+    // Get file size
+    let fileSize: number | undefined;
+    try {
+      const stats = fs.statSync(outputPath);
+      fileSize = stats.size;
+    } catch {
+      // Ignore
+    }
+
+    // Update job status
+    this.db.updateTranscodeJobStatus(jobId, 'completed', {
+      progress: 100,
+      completedAt: Date.now(),
+      expiresAt: Date.now() + CACHE_TTL_MS,
+      fileSize,
+    });
+
+    // Remove from active
+    this.activeTranscodes.delete(cacheKey);
+
+    logger.info('Transcode completed', { jobId, cacheKey, fileSize });
+
+    // Process next in queue
+    this.processQueue();
+  }
+
+  private handleTranscodeError(jobId: string, cacheKey: string, errorMessage: string): void {
+    if (!this.db) return;
+
+    // Update job status
+    this.db.updateTranscodeJobStatus(jobId, 'error', {
+      error: errorMessage,
+    });
+
+    // Clean up active
+    const active = this.activeTranscodes.get(cacheKey);
+    if (active) {
+      for (const res of active.subscribers) {
+        if (!res.writableEnded) {
+          res.end();
+        }
+      }
+      this.activeTranscodes.delete(cacheKey);
+    }
+
+    // Clean up partial file
+    const job = this.db.getTranscodeJob(jobId);
+    if (job?.outputPath && fs.existsSync(job.outputPath)) {
+      try {
+        fs.unlinkSync(job.outputPath);
+      } catch {
+        // Ignore
+      }
+    }
+
+    logger.error('Transcode failed', { jobId, cacheKey, error: errorMessage });
+
+    // Process next in queue
+    this.processQueue();
+  }
+
+  /**
+   * Clean up expired files
+   */
+  private cleanupExpiredFiles(): void {
+    if (!this.db || !this.initialized) return;
+
+    // Get and delete expired jobs from database
+    const expiredJobs = this.db.cleanupExpiredTranscodeJobs();
+
+    // Delete the files
+    for (const job of expiredJobs) {
+      if (job.outputPath && fs.existsSync(job.outputPath)) {
+        try {
+          fs.unlinkSync(job.outputPath);
+          logger.info('Cleaned up expired transcode file', { jobId: job.id, path: job.outputPath });
+        } catch {
+          logger.warn('Failed to delete expired transcode file', { path: job.outputPath });
+        }
       }
     }
 
     // Also clean up any orphaned files in the cache directory
     try {
       const files = fs.readdirSync(CACHE_DIR);
+      const now = Date.now();
       for (const file of files) {
         const filePath = path.join(CACHE_DIR, file);
         const stats = fs.statSync(filePath);
@@ -429,13 +583,26 @@ class TranscodeManager {
       clearInterval(this.cleanupInterval);
     }
 
-    for (const [, job] of this.jobs) {
-      if (job.ffmpegProcess && !job.ffmpegProcess.killed) {
-        job.ffmpegProcess.kill('SIGTERM');
+    if (this.workerInterval) {
+      clearInterval(this.workerInterval);
+    }
+
+    // Kill all active transcodes
+    for (const [, active] of this.activeTranscodes) {
+      if (!active.ffmpegProcess.killed) {
+        active.ffmpegProcess.kill('SIGTERM');
       }
     }
 
-    this.jobs.clear();
+    this.activeTranscodes.clear();
+  }
+
+  // Legacy compatibility methods for existing code
+  getProgress(cacheKey: string): { progress: number; status: string } | null {
+    const [ratingKey, resolutionId] = cacheKey.split('-');
+    const job = this.getJobByCacheKey(ratingKey, resolutionId);
+    if (!job) return null;
+    return { progress: job.progress, status: job.status };
   }
 }
 

@@ -11,9 +11,14 @@ import { createLibrariesRouter } from './routes/libraries';
 import { createMediaRouter } from './routes/media';
 import { createSettingsRouter } from './routes/settings';
 import { createLogsRouter } from './routes/logs';
+import { createTranscodesRouter } from './routes/transcodes';
+import { transcodeManager } from './services/transcodeManager';
 
 // Initialize database
 const db = new DatabaseService(config.database.path);
+
+// Initialize transcode manager with database
+transcodeManager.initialize(db);
 
 // Cleanup expired sessions every hour
 setInterval(() => {
@@ -51,6 +56,7 @@ app.use('/api/libraries', createLibrariesRouter(db));
 app.use('/api/media', createMediaRouter(db));
 app.use('/api/settings', createSettingsRouter(db));
 app.use('/api/logs', createLogsRouter(db));
+app.use('/api/transcodes', createTranscodesRouter(db));
 
 // Serve static files (frontend)
 const publicPath = path.join(__dirname, '..', 'public');
@@ -75,6 +81,7 @@ const server = app.listen(config.server.port, () => {
 // Graceful shutdown
 process.on('SIGTERM', () => {
   logger.info('SIGTERM signal received: closing HTTP server');
+  transcodeManager.shutdown();
   server.close(() => {
     logger.info('HTTP server closed');
     db.close();
@@ -84,6 +91,7 @@ process.on('SIGTERM', () => {
 
 process.on('SIGINT', () => {
   logger.info('SIGINT signal received: closing HTTP server');
+  transcodeManager.shutdown();
   server.close(() => {
     logger.info('HTTP server closed');
     db.close();

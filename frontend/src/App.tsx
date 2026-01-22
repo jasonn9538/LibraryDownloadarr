@@ -11,6 +11,7 @@ import { Settings } from './pages/Settings';
 import { SearchResults } from './pages/SearchResults';
 import { DownloadHistory } from './pages/DownloadHistory';
 import { Logs } from './pages/Logs';
+import { Transcodes } from './pages/Transcodes';
 import { DownloadProvider } from './contexts/DownloadContext';
 import { DownloadManager } from './components/DownloadManager';
 
@@ -108,6 +109,14 @@ const App: React.FC = () => {
               element={
                 <ProtectedRoute>
                   <SearchResults />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/transcodes"
+              element={
+                <ProtectedRoute>
+                  <Transcodes />
                 </ProtectedRoute>
               }
             />

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { api } from '../services/api';
 import { Library } from '../types';
@@ -12,13 +12,28 @@ interface SidebarProps {
 export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
   const [libraries, setLibraries] = useState<Library[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [transcodeCounts, setTranscodeCounts] = useState({ pending: 0, transcoding: 0, completed: 0, error: 0 });
   const navigate = useNavigate();
   const location = useLocation();
   const { user } = useAuthStore();
 
+  const loadTranscodeCounts = useCallback(async () => {
+    try {
+      const counts = await api.getTranscodeCounts();
+      setTranscodeCounts(counts);
+    } catch (error) {
+      // Silently fail - counts are not critical
+    }
+  }, []);
+
   useEffect(() => {
     loadLibraries();
-  }, []);
+    loadTranscodeCounts();
+
+    // Poll for transcode counts every 5 seconds
+    const interval = setInterval(loadTranscodeCounts, 5000);
+    return () => clearInterval(interval);
+  }, [loadTranscodeCounts]);
 
   const loadLibraries = async () => {
     try {
@@ -71,6 +86,34 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
             }`}
           >
             🏠 Home
+          </button>
+
+          <button
+            onClick={() => handleNavigate('/transcodes')}
+            className={`w-full text-left px-4 py-2 rounded-lg transition-colors flex items-center justify-between ${
+              isActive('/transcodes') ? 'bg-dark-200 text-primary-400' : 'hover:bg-dark-200'
+            }`}
+          >
+            <span>📥 Transcodes</span>
+            {(transcodeCounts.completed > 0 || transcodeCounts.transcoding > 0 || transcodeCounts.pending > 0) && (
+              <span className="flex items-center gap-1">
+                {transcodeCounts.completed > 0 && (
+                  <span className="px-1.5 py-0.5 text-xs bg-green-500/20 text-green-400 rounded">
+                    {transcodeCounts.completed}
+                  </span>
+                )}
+                {transcodeCounts.transcoding > 0 && (
+                  <span className="px-1.5 py-0.5 text-xs bg-blue-500/20 text-blue-400 rounded animate-pulse">
+                    {transcodeCounts.transcoding}
+                  </span>
+                )}
+                {transcodeCounts.pending > 0 && (
+                  <span className="px-1.5 py-0.5 text-xs bg-gray-500/20 text-gray-400 rounded">
+                    {transcodeCounts.pending}
+                  </span>
+                )}
+              </span>
+            )}
           </button>
 
           {user?.isAdmin && (

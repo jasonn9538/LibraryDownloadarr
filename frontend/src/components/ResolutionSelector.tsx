@@ -214,6 +214,11 @@ export const ResolutionSelector: React.FC<ResolutionSelectorProps> = ({
                     </>
                   )}
                 </div>
+                {!resolution.isOriginal && (
+                  <div className="text-xs text-blue-400 mt-1">
+                    ⚙️ Requires transcoding
+                  </div>
+                )}
               </div>
               <div className="text-right">
                 {resolution.isOriginal && resolution.fileSize ? (
