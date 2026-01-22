@@ -194,6 +194,12 @@ class ApiClient {
     return `/api/media/${ratingKey}/download/transcode?resolution=${encodeURIComponent(resolutionId)}`;
   }
 
+  // Get transcode progress
+  async getTranscodeProgress(cacheKey: string): Promise<{ progress: number; status: string }> {
+    const response = await this.client.get(`/media/transcode-progress/${encodeURIComponent(cacheKey)}`);
+    return response.data;
+  }
+
   async getSeasonSize(seasonRatingKey: string): Promise<{ totalSize: number; fileCount: number; totalSizeGB: string }> {
     const response = await this.client.get<{ totalSize: number; fileCount: number; totalSizeGB: string }>(
       `/media/season/${seasonRatingKey}/size`

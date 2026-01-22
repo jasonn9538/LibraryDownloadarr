@@ -1,7 +1,7 @@
 import { Router } from 'express';
-import { spawn } from 'child_process';
 import { DatabaseService } from '../models/database';
 import { plexService, RESOLUTION_PRESETS, getAvailableResolutions } from '../services/plexService';
+import { transcodeManager } from '../services/transcodeManager';
 import { logger } from '../utils/logger';
 import { AuthRequest, createAuthMiddleware } from '../middleware/auth';
 import axios from 'axios';
@@ -573,7 +573,20 @@ export const createMediaRouter = (db: DatabaseService) => {
     }
   });
 
+  // Get transcode progress
+  router.get('/transcode-progress/:cacheKey', authMiddleware, async (req: AuthRequest, res) => {
+    const { cacheKey } = req.params;
+    const progress = transcodeManager.getProgress(cacheKey);
+
+    if (!progress) {
+      return res.status(404).json({ error: 'Transcode job not found' });
+    }
+
+    return res.json(progress);
+  });
+
   // Download media with transcoding to a specific resolution using ffmpeg
+  // Features: caching, shared transcodes, progress tracking
   router.get('/:ratingKey/download/transcode', authMiddleware, async (req: AuthRequest, res) => {
     try {
       const { ratingKey } = req.params;
@@ -615,21 +628,13 @@ export const createMediaRouter = (db: DatabaseService) => {
       }
 
       const sourceHeight = sourceMedia.height || 0;
+      const totalDuration = sourceMedia.duration || 0;
+
       if (resolutionPreset.height > sourceHeight) {
         return res.status(400).json({
           error: `Cannot transcode to ${resolutionPreset.label} - source is only ${sourceHeight}p`
         });
       }
-
-      // Log metadata for debugging
-      logger.info('Transcode download request (ffmpeg)', {
-        userId: req.user?.id,
-        username: req.user?.username,
-        ratingKey,
-        mediaTitle: metadata.title,
-        requestedResolution: resolutionPreset.label,
-        sourceResolution: `${sourceMedia.width}x${sourceHeight}`,
-      });
 
       // Check if user has download permission
       const isExplicitlyDisabled = metadata.allowSync === false ||
@@ -664,17 +669,44 @@ export const createMediaRouter = (db: DatabaseService) => {
         }
       }
 
-      // Get the direct download URL from Plex
+      // Generate filename with resolution suffix
+      const originalFilename = sourceMedia.Part?.[0]?.file.split('/').pop() || 'download';
+      const baseName = originalFilename.replace(/\.[^/.]+$/, ''); // Remove extension
+      const filename = `${baseName}_${resolutionPreset.id}.mp4`;
+
+      // Get cache key for this transcode
+      const cacheKey = transcodeManager.getCacheKey(ratingKey, resolutionId);
+
+      // Check for existing job (cached or in progress)
+      const existingJob = transcodeManager.getJob(cacheKey);
+
+      if (existingJob) {
+        // Join existing transcode or serve cached file
+        logger.info('Joining existing transcode', {
+          cacheKey,
+          status: existingJob.status,
+          progress: existingJob.progress,
+          username: req.user?.username,
+        });
+
+        // Send cache key in header so frontend can poll for progress
+        res.setHeader('X-Transcode-Cache-Key', cacheKey);
+
+        transcodeManager.subscribeToJob(existingJob, res, filename);
+        return;
+      }
+
+      // Start new transcode - need to fetch from Plex first
       const downloadUrl = plexService.getDirectDownloadUrl(partKey, token);
 
-      logger.debug('Starting ffmpeg transcode', {
+      logger.info('Starting new transcode', {
+        cacheKey,
         ratingKey,
-        resolution: resolutionPreset.id,
-        targetHeight: resolutionPreset.height,
-        maxBitrate: resolutionPreset.maxVideoBitrate,
+        resolution: resolutionPreset.label,
+        duration: totalDuration,
+        username: req.user?.username,
       });
 
-      // Fetch the original file from Plex
       let plexResponse;
       try {
         plexResponse = await axios({
@@ -697,114 +729,33 @@ export const createMediaRouter = (db: DatabaseService) => {
         throw downloadError;
       }
 
-      // Log the download with formatted title including resolution
+      // Log the download
       const formattedTitle = formatMediaTitle(metadata, libraryTitle) + ` [${resolutionPreset.label}]`;
       db.logDownload(
         req.user!.id,
         formattedTitle,
         ratingKey,
-        undefined // Size unknown for transcoded content
+        undefined
       );
 
-      // Generate filename with resolution suffix
-      const originalFilename = sourceMedia.Part?.[0]?.file.split('/').pop() || 'download';
-      const baseName = originalFilename.replace(/\.[^/.]+$/, ''); // Remove extension
-      const filename = `${baseName}_${resolutionPreset.id}.mp4`;
+      // Start transcode job
+      const job = await transcodeManager.startOrJoinTranscode(
+        ratingKey,
+        resolutionId,
+        resolutionPreset.height,
+        resolutionPreset.maxVideoBitrate,
+        totalDuration,
+        plexResponse.data,
+        filename
+      );
 
-      // Set response headers
-      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-      res.setHeader('Content-Type', 'video/mp4');
-      // Note: Content-Length is not available for transcoded streams
+      // Send cache key in header so frontend can poll for progress
+      res.setHeader('X-Transcode-Cache-Key', cacheKey);
 
-      // Build ffmpeg arguments
-      // -i pipe:0 = read from stdin
-      // -vf scale = scale video to target height, -2 ensures width is divisible by 2
-      // -c:v libx264 = H.264 video codec
-      // -preset fast = balance between speed and compression
-      // -crf 23 = constant rate factor for quality (lower = better, 18-28 is reasonable)
-      // -maxrate/-bufsize = constrain bitrate
-      // -c:a aac = AAC audio codec
-      // -b:a 160k = audio bitrate
-      // -movflags = required flags for streaming MP4
-      // -f mp4 pipe:1 = output MP4 to stdout
-      const ffmpegArgs = [
-        '-i', 'pipe:0',
-        '-vf', `scale=-2:${resolutionPreset.height}`,
-        '-c:v', 'libx264',
-        '-preset', 'fast',
-        '-crf', '23',
-        '-maxrate', `${resolutionPreset.maxVideoBitrate}k`,
-        '-bufsize', `${resolutionPreset.maxVideoBitrate * 2}k`,
-        '-c:a', 'aac',
-        '-b:a', '160k',
-        '-movflags', 'frag_keyframe+empty_moov+faststart',
-        '-f', 'mp4',
-        'pipe:1'
-      ];
+      // Subscribe to the job
+      transcodeManager.subscribeToJob(job, res, filename);
 
-      logger.debug('ffmpeg command', { args: ffmpegArgs.join(' ') });
-
-      // Spawn ffmpeg process
-      const ffmpeg = spawn('ffmpeg', ffmpegArgs, {
-        stdio: ['pipe', 'pipe', 'pipe']
-      });
-
-      let ffmpegError = '';
-
-      // Collect stderr for error reporting
-      ffmpeg.stderr.on('data', (data) => {
-        const message = data.toString();
-        ffmpegError += message;
-        // Log progress info (ffmpeg outputs progress to stderr)
-        if (message.includes('frame=') || message.includes('time=')) {
-          logger.debug('ffmpeg progress', { progress: message.trim().substring(0, 100) });
-        }
-      });
-
-      ffmpeg.on('error', (err) => {
-        logger.error('ffmpeg process error', { error: err.message });
-        if (!res.headersSent) {
-          res.status(500).json({ error: 'Transcoding failed - ffmpeg error' });
-        }
-      });
-
-      ffmpeg.on('close', (code) => {
-        if (code !== 0 && code !== null) {
-          logger.error('ffmpeg exited with error', {
-            code,
-            stderr: ffmpegError.substring(ffmpegError.length - 500) // Last 500 chars
-          });
-        } else {
-          logger.info(`Transcode download completed for ${formattedTitle}`);
-        }
-      });
-
-      // Handle client disconnect
-      res.on('close', () => {
-        if (!ffmpeg.killed) {
-          logger.info('Client disconnected, killing ffmpeg process');
-          ffmpeg.kill('SIGTERM');
-        }
-      });
-
-      // Pipe: Plex -> ffmpeg -> response
-      plexResponse.data.pipe(ffmpeg.stdin);
-      ffmpeg.stdout.pipe(res);
-
-      // Handle errors on the input stream
-      plexResponse.data.on('error', (err: Error) => {
-        logger.error('Plex stream error', { error: err.message });
-        ffmpeg.kill('SIGTERM');
-      });
-
-      ffmpeg.stdin.on('error', (err: Error) => {
-        // EPIPE is expected if ffmpeg closes early
-        if ((err as NodeJS.ErrnoException).code !== 'EPIPE') {
-          logger.error('ffmpeg stdin error', { error: err.message });
-        }
-      });
-
-      logger.info(`Transcode download started for ${formattedTitle} by user ${req.user?.username}`);
+      logger.info(`Transcode started for ${formattedTitle} by user ${req.user?.username}`);
       return;
     } catch (error: any) {
       logger.error('Transcode download failed', {

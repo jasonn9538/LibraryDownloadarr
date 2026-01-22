@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef, ReactNode } from 'react';
 import { api } from '../services/api';
 
 interface Download {
@@ -11,8 +11,9 @@ interface Download {
   status: 'downloading' | 'completed' | 'error';
   error?: string;
   isBulkDownload?: boolean; // True for season/album zips (no progress tracking)
-  isTranscoded?: boolean; // True for transcoded downloads (no Content-Length)
+  isTranscoded?: boolean; // True for transcoded downloads
   resolution?: string; // Resolution label for display
+  transcodeCacheKey?: string; // Cache key for polling transcode progress
 }
 
 interface DownloadContextType {
@@ -43,6 +44,7 @@ interface DownloadProviderProps {
 
 export const DownloadProvider: React.FC<DownloadProviderProps> = ({ children }) => {
   const [downloads, setDownloads] = useState<Download[]>([]);
+  const progressPollersRef = useRef<Map<string, NodeJS.Timeout>>(new Map());
 
   // Warn user before closing/refreshing if downloads are in progress
   useEffect(() => {
@@ -50,9 +52,8 @@ export const DownloadProvider: React.FC<DownloadProviderProps> = ({ children }) 
       const activeDownloads = downloads.filter(d => d.status === 'downloading');
 
       if (activeDownloads.length > 0) {
-        // Standard way to show browser confirmation dialog
         e.preventDefault();
-        e.returnValue = ''; // Chrome requires returnValue to be set
+        e.returnValue = '';
       }
     };
 
@@ -62,6 +63,53 @@ export const DownloadProvider: React.FC<DownloadProviderProps> = ({ children }) 
       window.removeEventListener('beforeunload', handleBeforeUnload);
     };
   }, [downloads]);
+
+  // Clean up pollers on unmount
+  useEffect(() => {
+    return () => {
+      progressPollersRef.current.forEach((interval) => clearInterval(interval));
+    };
+  }, []);
+
+  // Start polling for transcode progress
+  const startProgressPolling = (downloadId: string, cacheKey: string) => {
+    // Don't start if already polling
+    if (progressPollersRef.current.has(downloadId)) return;
+
+    const pollInterval = setInterval(async () => {
+      try {
+        const progressData = await api.getTranscodeProgress(cacheKey);
+
+        setDownloads((prev) =>
+          prev.map((d) =>
+            d.id === downloadId
+              ? { ...d, progress: progressData.progress }
+              : d
+          )
+        );
+
+        // Stop polling if completed or error
+        if (progressData.status === 'completed' || progressData.status === 'error') {
+          clearInterval(pollInterval);
+          progressPollersRef.current.delete(downloadId);
+        }
+      } catch (err) {
+        // Job might be finished, stop polling
+        clearInterval(pollInterval);
+        progressPollersRef.current.delete(downloadId);
+      }
+    }, 1000); // Poll every second
+
+    progressPollersRef.current.set(downloadId, pollInterval);
+  };
+
+  const stopProgressPolling = (downloadId: string) => {
+    const interval = progressPollersRef.current.get(downloadId);
+    if (interval) {
+      clearInterval(interval);
+      progressPollersRef.current.delete(downloadId);
+    }
+  };
 
   const startDownload = async (
     ratingKey: string,
@@ -129,6 +177,23 @@ export const DownloadProvider: React.FC<DownloadProviderProps> = ({ children }) 
         throw new Error(errorMessage);
       }
 
+      // For transcoded downloads, get cache key and start polling
+      if (isTranscoded) {
+        const cacheKey = response.headers.get('X-Transcode-Cache-Key');
+        if (cacheKey) {
+          // Update download with cache key
+          setDownloads((prev) =>
+            prev.map((d) =>
+              d.id === downloadId
+                ? { ...d, transcodeCacheKey: cacheKey }
+                : d
+            )
+          );
+          // Start polling for progress
+          startProgressPolling(downloadId, cacheKey);
+        }
+      }
+
       const contentLength = response.headers.get('content-length');
       const total = contentLength ? parseInt(contentLength, 10) : 0;
 
@@ -148,8 +213,8 @@ export const DownloadProvider: React.FC<DownloadProviderProps> = ({ children }) 
         chunks.push(value);
         receivedLength += value.length;
 
-        // Update progress - only for non-bulk, non-transcoded downloads with known size
-        // Bulk downloads (zips) and transcoded downloads don't have Content-Length
+        // Update progress for non-bulk, non-transcoded downloads with known size
+        // Transcoded downloads get progress from polling
         if (!isBulkDownload && !isTranscoded && total > 0) {
           const progress = Math.round((receivedLength / total) * 100);
           setDownloads((prev) =>
@@ -161,6 +226,9 @@ export const DownloadProvider: React.FC<DownloadProviderProps> = ({ children }) 
           );
         }
       }
+
+      // Stop polling if it was a transcode
+      stopProgressPolling(downloadId);
 
       // Create blob and download
       const blob = new Blob(chunks as BlobPart[]);
@@ -187,6 +255,9 @@ export const DownloadProvider: React.FC<DownloadProviderProps> = ({ children }) 
         setDownloads((prev) => prev.filter((d) => d.id !== downloadId));
       }, 3000);
     } catch (error: any) {
+      // Stop polling on error
+      stopProgressPolling(downloadId);
+
       // Mark as error
       setDownloads((prev) =>
         prev.map((d) =>
@@ -204,6 +275,7 @@ export const DownloadProvider: React.FC<DownloadProviderProps> = ({ children }) 
   };
 
   const removeDownload = (id: string) => {
+    stopProgressPolling(id);
     setDownloads((prev) => prev.filter((d) => d.id !== id));
   };
 

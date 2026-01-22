@@ -42,25 +42,36 @@ export const DownloadManager: React.FC = () => {
                   </div>
                 </>
               ) : download.isTranscoded ? (
-                // Indeterminate progress for transcoded downloads
+                // Progress bar for transcoded downloads with real percentage
                 <>
                   <div className="flex items-center justify-between text-xs mb-1">
                     <span className="text-gray-400">
                       Transcoding to {download.resolution || 'lower resolution'}...
                     </span>
-                    <span className="text-secondary-400 font-semibold animate-pulse">◉</span>
+                    <span className="text-secondary-400 font-semibold">
+                      {download.progress > 0 ? `${download.progress}%` : <span className="animate-pulse">◉</span>}
+                    </span>
                   </div>
                   <div className="w-full h-2 bg-dark-200 rounded-full overflow-hidden">
-                    <div
-                      className="h-full bg-gradient-to-r from-secondary-500 via-primary-500 to-secondary-500 animate-[shimmer_2s_ease-in-out_infinite]"
-                      style={{
-                        backgroundSize: '200% 100%',
-                        animation: 'shimmer 2s ease-in-out infinite'
-                      }}
-                    />
+                    {download.progress > 0 ? (
+                      <div
+                        className="h-full bg-gradient-to-r from-secondary-500 to-primary-500 transition-all duration-500 ease-out"
+                        style={{ width: `${download.progress}%` }}
+                      />
+                    ) : (
+                      <div
+                        className="h-full bg-gradient-to-r from-secondary-500 via-primary-500 to-secondary-500"
+                        style={{
+                          backgroundSize: '200% 100%',
+                          animation: 'shimmer 2s ease-in-out infinite'
+                        }}
+                      />
+                    )}
                   </div>
                   <div className="text-[10px] text-gray-500 mt-1">
-                    Converting video on server - this may take a while
+                    {download.progress > 0
+                      ? 'Converting video on server...'
+                      : 'Starting transcode...'}
                   </div>
                 </>
               ) : (
