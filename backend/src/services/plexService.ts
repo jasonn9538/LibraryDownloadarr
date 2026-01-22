@@ -751,21 +751,38 @@ export class PlexService {
       throw new Error('Plex server URL not configured');
     }
 
+    // Generate a unique session ID for this transcode request
+    const sessionId = `libdl-${Date.now()}-${Math.random().toString(36).substring(2, 15)}`;
+
     // Build the transcode URL with resolution parameters
+    // The universal transcoder requires specific parameters to work correctly
     const params = new URLSearchParams({
       'path': `/library/metadata/${ratingKey}`,
       'mediaIndex': '0',
       'partIndex': '0',
       'protocol': 'http',
+      'offset': '0',
+      'fastSeek': '1',
       'directStream': '0',        // Force transcoding
       'directPlay': '0',          // Disable direct play
       'videoResolution': `${resolution.width}x${resolution.height}`,
       'maxVideoBitrate': resolution.maxVideoBitrate.toString(),
+      'videoQuality': '100',
       'videoCodec': resolution.videoCodec,
       'audioCodec': resolution.audioCodec,
+      'audioBitrate': '160',
+      'audioChannels': '2',
       'subtitleSize': '100',
       'copyTimestamps': '1',
       'defeatContentTypeRestriction': '1',
+      'autoAdjustQuality': '0',
+      'session': sessionId,
+      'X-Plex-Session-Identifier': sessionId,
+      'X-Plex-Client-Identifier': config.plex.clientIdentifier,
+      'X-Plex-Product': config.plex.product,
+      'X-Plex-Version': config.plex.version,
+      'X-Plex-Platform': 'Web',
+      'X-Plex-Device': 'Browser',
       'X-Plex-Token': token,
     });
 

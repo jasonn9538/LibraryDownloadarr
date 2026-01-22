@@ -680,6 +680,13 @@ export const createMediaRouter = (db: DatabaseService) => {
           timeout: 60000,
         });
       } catch (downloadError: any) {
+        logger.error('Plex transcode request failed', {
+          status: downloadError.response?.status,
+          statusText: downloadError.response?.statusText,
+          error: downloadError.message,
+          url: transcodeUrl.replace(token, '[REDACTED]'),
+        });
+
         if (downloadError.response?.status === 403) {
           logger.warn('Transcode download denied by Plex server (403)', {
             userId: req.user?.id,
@@ -719,8 +726,13 @@ export const createMediaRouter = (db: DatabaseService) => {
 
       logger.info(`Transcode download started for ${formattedTitle} by user ${req.user?.username}`);
       return;
-    } catch (error) {
-      logger.error('Transcode download failed', { error });
+    } catch (error: any) {
+      logger.error('Transcode download failed', {
+        error: error.message,
+        stack: error.stack,
+        response: error.response?.data,
+        status: error.response?.status,
+      });
       if (!res.headersSent) {
         return res.status(500).json({ error: 'Transcode download failed' });
       }
