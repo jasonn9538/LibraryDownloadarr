@@ -463,7 +463,9 @@ class TranscodeManager {
       logger.info('Source file downloaded, starting encode', {
         jobId: job.id,
         hwEncoder: hwEncoder || 'software',
-        title: job.mediaTitle
+        title: job.mediaTitle,
+        inputFile: inputTempPath,
+        outputFile: outputPath,
       });
 
       // Build ffmpeg arguments based on encoder type
@@ -553,9 +555,18 @@ class TranscodeManager {
       };
       this.activeTranscodes.set(cacheKey, activeTranscode);
 
+      // Capture stderr for error reporting
+      let stderrOutput = '';
+
       // Parse ffmpeg stderr for progress
       ffmpeg.stderr.on('data', (data: Buffer) => {
         const output = data.toString();
+
+        // Keep last 2000 chars of stderr for error reporting
+        stderrOutput += output;
+        if (stderrOutput.length > 2000) {
+          stderrOutput = stderrOutput.slice(-2000);
+        }
 
         // Parse time= from ffmpeg output
         const timeMatch = output.match(/time=(\d+):(\d+):(\d+\.\d+)/);
@@ -574,7 +585,7 @@ class TranscodeManager {
       });
 
       ffmpeg.on('error', (err) => {
-        logger.error('ffmpeg process error', { error: err.message, jobId: job.id });
+        logger.error('ffmpeg process error', { error: err.message, jobId: job.id, stderr: stderrOutput });
         cleanupTempFile();
         this.handleTranscodeError(job.id, cacheKey, err.message);
       });
@@ -586,6 +597,7 @@ class TranscodeManager {
         } else {
           const currentJob = this.db?.getTranscodeJob(job.id);
           if (currentJob?.status !== 'cancelled') {
+            logger.error('ffmpeg failed', { jobId: job.id, exitCode: code, stderr: stderrOutput });
             this.handleTranscodeError(job.id, cacheKey, `ffmpeg exited with code ${code}`);
           }
         }
