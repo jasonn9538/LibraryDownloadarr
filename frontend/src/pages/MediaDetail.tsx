@@ -119,13 +119,21 @@ export const MediaDetail: React.FC = () => {
 
     // For non-original resolutions, check if a transcode is already available
     if (!resolution.isOriginal) {
-      // If transcode is already completed, navigate to Transcodes page to download
+      // If transcode is already completed, download directly
       if (resolution.transcodeStatus === 'completed' && resolution.transcodeJobId) {
-        navigate('/transcodes');
+        const token = localStorage.getItem('token');
+        const url = `${api.getTranscodeJobDownloadUrl(resolution.transcodeJobId)}?token=${encodeURIComponent(token || '')}`;
+
+        // Use iframe to trigger download (avoids buffering large files in memory)
+        const iframe = document.createElement('iframe');
+        iframe.style.display = 'none';
+        iframe.src = url;
+        document.body.appendChild(iframe);
+        setTimeout(() => document.body.removeChild(iframe), 5000);
         return;
       }
 
-      // If already pending or transcoding, just navigate to see status
+      // If already pending or transcoding, navigate to see status
       if (resolution.transcodeStatus === 'pending' || resolution.transcodeStatus === 'transcoding') {
         navigate('/transcodes');
         return;
