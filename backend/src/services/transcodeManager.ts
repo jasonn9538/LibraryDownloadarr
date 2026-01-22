@@ -135,56 +135,27 @@ class TranscodeManager {
 
     this.jobs.set(cacheKey, job);
 
-    // Build ffmpeg arguments
-    // Try to use hardware acceleration if available (Intel Quick Sync via VAAPI)
-    // Falls back to fast software encoding if hardware isn't available
-    const useHardwareAccel = fs.existsSync('/dev/dri/renderD128');
-
-    let ffmpegArgs: string[];
-
-    if (useHardwareAccel) {
-      // Hardware-accelerated encoding using Intel Quick Sync (VAAPI)
-      // This is MUCH faster than software encoding
-      logger.info('Using hardware acceleration (VAAPI)', { cacheKey });
-      ffmpegArgs = [
-        '-hwaccel', 'vaapi',
-        '-hwaccel_device', '/dev/dri/renderD128',
-        '-hwaccel_output_format', 'vaapi',
-        '-i', 'pipe:0',
-        '-vf', `scale_vaapi=w=-2:h=${resolutionHeight}`,
-        '-c:v', 'h264_vaapi',
-        '-b:v', `${maxBitrate}k`,
-        '-maxrate', `${maxBitrate}k`,
-        '-bufsize', `${maxBitrate * 2}k`,
-        '-c:a', 'aac',
-        '-b:a', '128k',
-        '-ac', '2',
-        '-movflags', 'frag_keyframe+empty_moov',
-        '-f', 'mp4',
-        '-y',
-        outputPath
-      ];
-    } else {
-      // Software encoding - optimized for speed
-      logger.info('Using software encoding (no hardware acceleration)', { cacheKey });
-      ffmpegArgs = [
-        '-i', 'pipe:0',
-        '-vf', `scale=-2:${resolutionHeight}`,
-        '-c:v', 'libx264',
-        '-preset', 'ultrafast',
-        '-tune', 'fastdecode',
-        '-crf', '28',
-        '-maxrate', `${maxBitrate}k`,
-        '-bufsize', `${maxBitrate * 2}k`,
-        '-c:a', 'aac',
-        '-b:a', '128k',
-        '-ac', '2',
-        '-movflags', 'frag_keyframe+empty_moov',
-        '-f', 'mp4',
-        '-y',
-        outputPath
-      ];
-    }
+    // Build ffmpeg arguments - optimized for speed
+    // Using software encoding with ultrafast preset
+    // Hardware acceleration (VAAPI) has issues with piped input, so we use CPU
+    const ffmpegArgs = [
+      '-i', 'pipe:0',
+      '-vf', `scale=-2:${resolutionHeight}`,
+      '-c:v', 'libx264',
+      '-preset', 'ultrafast',
+      '-tune', 'fastdecode',
+      '-crf', '28',
+      '-maxrate', `${maxBitrate}k`,
+      '-bufsize', `${maxBitrate * 2}k`,
+      '-c:a', 'aac',
+      '-b:a', '128k',
+      '-ac', '2',
+      '-threads', '0', // Use all CPU cores
+      '-movflags', 'frag_keyframe+empty_moov',
+      '-f', 'mp4',
+      '-y',
+      outputPath
+    ];
 
     logger.info('Starting transcode', {
       cacheKey,
