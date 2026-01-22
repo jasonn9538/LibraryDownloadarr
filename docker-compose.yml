@@ -31,8 +31,8 @@ services:
     devices:
       - /dev/dri:/dev/dri
     group_add:
-      - video
-      - render
+      - "44"    # video group
+      - "993"   # render group
     networks:
       - librarydownloadarr
 
