@@ -33,8 +33,15 @@ FROM node:20-alpine
 
 WORKDIR /app
 
-# Install ffmpeg for video transcoding
-RUN apk add --no-cache ffmpeg
+# Install ffmpeg and hardware encoding dependencies
+# - ffmpeg: video transcoding
+# - libva/mesa-va-gallium: VAAPI support (Intel/AMD GPUs)
+# - intel-media-driver: Intel GPU VAAPI driver
+RUN apk add --no-cache \
+    ffmpeg \
+    libva \
+    mesa-va-gallium \
+    intel-media-driver
 
 # Install production dependencies for backend
 COPY backend/package*.json ./
