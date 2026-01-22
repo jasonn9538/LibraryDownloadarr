@@ -104,9 +104,13 @@ export const ResolutionSelector: React.FC<ResolutionSelectorProps> = ({
       }
     };
 
-    // Close on scroll
-    const handleScroll = () => {
+    // Close on scroll - but NOT if scrolling inside the dropdown
+    const handleScroll = (event: Event) => {
       if (isOpen) {
+        // Don't close if scrolling inside the dropdown
+        if (dropdownRef.current?.contains(event.target as Node)) {
+          return;
+        }
         onCancel();
       }
     };
