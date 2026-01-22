@@ -26,10 +26,12 @@ This document provides a comprehensive overview of the LibraryDownloadarr codeba
 - **Plex OAuth Authentication**: Users sign in with their Plex accounts
 - **Library Browsing**: Display movies, TV shows, and music with posters and metadata
 - **One-Click Downloads**: Download original media files directly
+- **Resolution Selection**: Choose download quality or transcode to lower resolutions
+- **Transcode Queue**: Background transcoding with progress tracking (files kept 1 week)
+- **Bulk Downloads**: Download entire seasons or albums as ZIP files
 - **Permission Respect**: Honors Plex's user access controls
 - **Progressive Web App (PWA)**: Installable on mobile devices
 - **Responsive Design**: Works on desktop, mobile browser, and PWA
-- **Download Management**: Real-time download progress with queue management
 - **Admin Features**: Download history, logs, and settings
 
 ### Project Goals
@@ -81,23 +83,24 @@ backend/
 │   ├── index.ts                 # Entry point, Express setup
 │   ├── config/
 │   │   └── index.ts            # Configuration (ports, Plex metadata)
-│   ├── db/
-│   │   ├── index.ts            # SQLite database initialization
-│   │   └── schema.sql          # Database schema
+│   ├── models/
+│   │   └── database.ts         # SQLite database service & transcode job CRUD
 │   ├── middleware/
-│   │   ├── auth.ts             # Authentication middleware
+│   │   ├── auth.ts             # Authentication middleware (supports token in query param)
 │   │   └── error.ts            # Error handling middleware
 │   ├── routes/
 │   │   ├── auth.ts             # Login, logout, Plex OAuth
-│   │   ├── media.ts            # Media browsing and downloads
+│   │   ├── media.ts            # Media browsing, downloads, resolution options
+│   │   ├── transcodes.ts       # Transcode queue API (queue, cancel, download)
 │   │   ├── libraries.ts        # Library listing
 │   │   ├── settings.ts         # Admin settings (Plex URL/token)
-│   │   ├── downloads.ts        # Download history
 │   │   └── logs.ts             # System logs
 │   ├── services/
-│   │   └── plexService.ts      # Plex API integration
+│   │   ├── plexService.ts      # Plex API integration
+│   │   └── transcodeManager.ts # ffmpeg transcoding with queue management
 │   ├── utils/
-│   │   └── logger.ts           # Winston logger setup
+│   │   ├── logger.ts           # Winston logger setup
+│   │   └── zipUtils.ts         # ZIP streaming for bulk downloads
 │   └── types/
 │       └── index.ts            # TypeScript types
 ├── package.json
@@ -112,15 +115,17 @@ frontend/
 │   ├── App.tsx                 # Routes and protected route logic
 │   ├── components/
 │   │   ├── Header.tsx          # Top navigation with safe area insets
-│   │   ├── Sidebar.tsx         # Left nav with library list
-│   │   ├── DownloadManager.tsx # Floating download progress widget
-│   │   └── MediaCard.tsx       # Reusable media poster card
+│   │   ├── Sidebar.tsx         # Left nav with library list + transcode badges
+│   │   ├── DownloadManager.tsx # Floating download notification widget
+│   │   ├── MediaCard.tsx       # Reusable media poster card
+│   │   └── ResolutionSelector.tsx # Quality selection dropdown for downloads
 │   ├── pages/
 │   │   ├── Setup.tsx           # First-time admin setup
 │   │   ├── Login.tsx           # Login with Plex OAuth
 │   │   ├── Dashboard.tsx       # Home page with libraries
 │   │   ├── LibraryView.tsx     # Grid view of media in library
-│   │   ├── MediaDetail.tsx     # Detail page with download button
+│   │   ├── MediaDetail.tsx     # Detail page with resolution selection
+│   │   ├── Transcodes.tsx      # Transcode queue management page
 │   │   ├── SearchResults.tsx   # Search results page
 │   │   ├── Settings.tsx        # Admin settings page
 │   │   ├── DownloadHistory.tsx # Admin download history
@@ -128,9 +133,9 @@ frontend/
 │   ├── stores/
 │   │   └── authStore.ts        # Zustand store for auth state
 │   ├── contexts/
-│   │   └── DownloadContext.tsx # React Context for download queue
+│   │   └── DownloadContext.tsx # React Context for direct downloads
 │   ├── services/
-│   │   └── api.ts              # Axios API client
+│   │   └── api.ts              # Axios API client (includes transcode API)
 │   ├── hooks/
 │   │   └── useMobileMenu.ts    # Custom hook for mobile menu state
 │   ├── styles/
@@ -367,13 +372,23 @@ try {
 ```
 
 ### Download Flow Pattern
-1. User clicks download button
-2. Frontend calls `/api/media/:ratingKey/download`
-3. Backend creates download record in database
-4. Backend streams file with proper headers
-5. Download progress tracked via DownloadContext
-6. DownloadManager widget shows progress
-7. Download history recorded for admin
+
+**Direct Downloads (Original Resolution):**
+1. User clicks download button and selects "Original" quality
+2. Frontend triggers download via hidden iframe with token in URL
+3. Browser's native download manager handles the file
+4. Download notification shown briefly via DownloadManager widget
+5. Download history recorded for admin
+
+**Transcoded Downloads:**
+1. User clicks download and selects a lower resolution (e.g., 720p)
+2. Frontend calls `POST /api/transcodes` to queue the job
+3. User is shown a toast notification with link to Transcodes page
+4. Backend's TranscodeManager processes the queue (max 2 concurrent)
+5. ffmpeg transcodes the file in background, progress stored in database
+6. User monitors progress on Transcodes page (polls every 3 seconds)
+7. When complete, user downloads via `GET /api/transcodes/:jobId/download`
+8. Files are kept for 1 week, then auto-deleted
 
 ### Responsive Component Pattern
 Every page with Header/Sidebar should:
@@ -596,6 +611,38 @@ const year = media.year ? `(${media.year})` : '';
 **GET /api/media/search?q={query}**
 - Requires auth
 - Returns: Array of Media objects matching query
+
+**GET /api/media/:ratingKey/resolutions**
+- Requires auth
+- Returns: Available resolution options for transcoding
+
+### Transcode Endpoints
+
+**GET /api/transcodes**
+- Requires auth
+- Returns: User's transcode jobs (all statuses)
+
+**GET /api/transcodes/available**
+- Requires auth
+- Returns: All completed transcodes (including other users')
+
+**GET /api/transcodes/counts**
+- Requires auth
+- Returns: `{ pending, transcoding, completed, error }` counts
+
+**POST /api/transcodes**
+- Requires auth
+- Body: `{ ratingKey, resolutionId }`
+- Queues a new transcode job
+- Returns: Created job object
+
+**DELETE /api/transcodes/:jobId**
+- Requires auth
+- Cancels/removes a transcode job
+
+**GET /api/transcodes/:jobId/download**
+- Requires auth
+- Streams completed transcode file
 
 ### Admin Endpoints
 
