@@ -44,7 +44,7 @@ interface DownloadProviderProps {
 
 export const DownloadProvider: React.FC<DownloadProviderProps> = ({ children }) => {
   const [downloads, setDownloads] = useState<Download[]>([]);
-  const progressPollersRef = useRef<Map<string, NodeJS.Timeout>>(new Map());
+  const progressPollersRef = useRef<Map<string, ReturnType<typeof setInterval>>>(new Map());
 
   // Warn user before closing/refreshing if downloads are in progress
   useEffect(() => {
