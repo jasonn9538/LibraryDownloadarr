@@ -11,11 +11,19 @@ interface Download {
   status: 'downloading' | 'completed' | 'error';
   error?: string;
   isBulkDownload?: boolean; // True for season/album zips (no progress tracking)
+  isTranscoded?: boolean; // True for transcoded downloads (no Content-Length)
+  quality?: string; // Quality label for display
 }
 
 interface DownloadContextType {
   downloads: Download[];
-  startDownload: (ratingKey: string, partKey: string, filename: string, title: string) => Promise<void>;
+  startDownload: (
+    ratingKey: string,
+    partKey: string,
+    filename: string,
+    title: string,
+    options?: { qualityId?: string; qualityLabel?: string; isOriginal?: boolean }
+  ) => Promise<void>;
   removeDownload: (id: string) => void;
 }
 
@@ -59,12 +67,16 @@ export const DownloadProvider: React.FC<DownloadProviderProps> = ({ children }) 
     ratingKey: string,
     partKey: string,
     filename: string,
-    title: string
+    title: string,
+    options?: { qualityId?: string; qualityLabel?: string; isOriginal?: boolean }
   ): Promise<void> => {
     const downloadId = `${ratingKey}-${partKey}-${Date.now()}`;
 
     // Check if this is a bulk download (season or album ZIP)
     const isBulkDownload = partKey.includes('/season/') || partKey.includes('/album/');
+
+    // Check if this is a transcoded download (non-original quality)
+    const isTranscoded = !!(options?.qualityId && !options?.isOriginal);
 
     // Add download to state
     const newDownload: Download = {
@@ -72,19 +84,30 @@ export const DownloadProvider: React.FC<DownloadProviderProps> = ({ children }) 
       ratingKey,
       partKey,
       filename,
-      title,
+      title: options?.qualityLabel ? `${title} [${options.qualityLabel}]` : title,
       progress: 0,
       status: 'downloading',
       isBulkDownload,
+      isTranscoded,
+      quality: options?.qualityLabel,
     };
 
     setDownloads((prev) => [...prev, newDownload]);
 
     try {
-      // Check if partKey is already a full URL (for bulk downloads) or a path fragment
-      const downloadUrl = partKey.startsWith('/api/')
-        ? partKey // Already a full URL for bulk downloads
-        : api.getDownloadUrl(ratingKey, partKey); // Single file download
+      // Determine the download URL based on download type
+      let downloadUrl: string;
+
+      if (partKey.startsWith('/api/')) {
+        // Already a full URL for bulk downloads
+        downloadUrl = partKey;
+      } else if (isTranscoded && options?.qualityId) {
+        // Use transcode endpoint for non-original quality
+        downloadUrl = api.getTranscodeDownloadUrl(ratingKey, options.qualityId);
+      } else {
+        // Regular direct file download
+        downloadUrl = api.getDownloadUrl(ratingKey, partKey);
+      }
 
       // Fetch with progress tracking
       const response = await fetch(downloadUrl, {
@@ -125,9 +148,9 @@ export const DownloadProvider: React.FC<DownloadProviderProps> = ({ children }) 
         chunks.push(value);
         receivedLength += value.length;
 
-        // Update progress - only for non-bulk downloads with known size
-        // Bulk downloads (zips) don't have Content-Length, so we can't track progress
-        if (!isBulkDownload && total > 0) {
+        // Update progress - only for non-bulk, non-transcoded downloads with known size
+        // Bulk downloads (zips) and transcoded downloads don't have Content-Length
+        if (!isBulkDownload && !isTranscoded && total > 0) {
           const progress = Math.round((receivedLength / total) * 100);
           setDownloads((prev) =>
             prev.map((d) =>

@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { DatabaseService } from '../models/database';
-import { plexService } from '../services/plexService';
+import { plexService, QUALITY_PRESETS, getAvailableQualities, QualityPreset } from '../services/plexService';
 import { logger } from '../utils/logger';
 import { AuthRequest, createAuthMiddleware } from '../middleware/auth';
 import axios from 'axios';
@@ -496,6 +496,232 @@ export const createMediaRouter = (db: DatabaseService) => {
       logger.error('Download failed', { error });
       if (!res.headersSent) {
         return res.status(500).json({ error: 'Download failed' });
+      }
+      return;
+    }
+  });
+
+  // Get available quality options for a media item
+  // Returns only qualities that are <= the source resolution
+  router.get('/:ratingKey/qualities', authMiddleware, async (req: AuthRequest, res) => {
+    try {
+      const { ratingKey } = req.params;
+      const { token, serverUrl, error } = getUserCredentials(req);
+
+      if (error) {
+        return res.status(403).json({ error });
+      }
+
+      if (!token || !serverUrl) {
+        return res.status(500).json({ error: 'Plex server not configured' });
+      }
+
+      plexService.setServerConnection(serverUrl, token);
+      const metadata = await plexService.getMediaMetadata(ratingKey, token);
+
+      // Get source resolution from the media
+      const sourceMedia = metadata.Media?.[0];
+      if (!sourceMedia) {
+        return res.status(404).json({ error: 'No media found for this item' });
+      }
+
+      const sourceHeight = sourceMedia.height || 0;
+      const sourceWidth = sourceMedia.width || 0;
+
+      // Get available quality presets based on source resolution
+      const availableQualities = getAvailableQualities(sourceHeight);
+
+      // Add "Original" option at the top
+      const qualities = [
+        {
+          id: 'original',
+          label: `Original (${sourceMedia.videoResolution || `${sourceWidth}x${sourceHeight}`})`,
+          height: sourceHeight,
+          width: sourceWidth,
+          isOriginal: true,
+          bitrate: sourceMedia.bitrate,
+          codec: sourceMedia.videoCodec,
+          container: sourceMedia.container,
+          fileSize: sourceMedia.Part?.[0]?.size,
+        },
+        ...availableQualities.map(q => ({
+          ...q,
+          isOriginal: false,
+          // Estimate file size based on bitrate and duration
+          estimatedSize: sourceMedia.duration
+            ? Math.round((q.maxVideoBitrate * 1000 * (sourceMedia.duration / 1000)) / 8)
+            : undefined,
+        })),
+      ];
+
+      return res.json({
+        qualities,
+        source: {
+          height: sourceHeight,
+          width: sourceWidth,
+          resolution: sourceMedia.videoResolution,
+          bitrate: sourceMedia.bitrate,
+          codec: sourceMedia.videoCodec,
+          container: sourceMedia.container,
+        }
+      });
+    } catch (error) {
+      logger.error('Failed to get quality options', { error });
+      return res.status(500).json({ error: 'Failed to get quality options' });
+    }
+  });
+
+  // Download media with transcoding to a specific quality
+  router.get('/:ratingKey/download/transcode', authMiddleware, async (req: AuthRequest, res) => {
+    try {
+      const { ratingKey } = req.params;
+      const { quality: qualityId } = req.query;
+
+      if (!qualityId || typeof qualityId !== 'string') {
+        return res.status(400).json({ error: 'Quality parameter is required' });
+      }
+
+      // Find the quality preset
+      const qualityPreset = QUALITY_PRESETS.find(q => q.id === qualityId);
+      if (!qualityPreset) {
+        return res.status(400).json({ error: 'Invalid quality preset' });
+      }
+
+      const { token, serverUrl, error } = getUserCredentials(req);
+
+      if (error) {
+        return res.status(403).json({ error });
+      }
+
+      if (!token || !serverUrl) {
+        return res.status(401).json({ error: 'Plex token required - configure in settings' });
+      }
+
+      plexService.setServerConnection(serverUrl, token);
+
+      const metadata = await plexService.getMediaMetadata(ratingKey, token);
+
+      // Verify the requested quality is <= source quality
+      const sourceMedia = metadata.Media?.[0];
+      if (!sourceMedia) {
+        return res.status(404).json({ error: 'No media found for this item' });
+      }
+
+      const sourceHeight = sourceMedia.height || 0;
+      if (qualityPreset.height > sourceHeight) {
+        return res.status(400).json({
+          error: `Cannot transcode to ${qualityPreset.label} - source is only ${sourceHeight}p`
+        });
+      }
+
+      // Log metadata for debugging permission issues
+      logger.info('Transcode download request', {
+        userId: req.user?.id,
+        username: req.user?.username,
+        isAdmin: req.user?.isAdmin,
+        ratingKey,
+        mediaTitle: metadata.title,
+        requestedQuality: qualityPreset.label,
+        sourceResolution: `${sourceMedia.width}x${sourceHeight}`,
+      });
+
+      // Check if user has download permission
+      const isExplicitlyDisabled = metadata.allowSync === false ||
+                                   metadata.allowSync === 0 ||
+                                   metadata.allowSync === '0';
+
+      if (isExplicitlyDisabled && !req.user?.isAdmin) {
+        logger.warn('Transcode download denied: user lacks download permission', {
+          userId: req.user?.id,
+          username: req.user?.username,
+          ratingKey,
+          mediaTitle: metadata.title,
+        });
+        return res.status(403).json({
+          error: 'Download not allowed. The server administrator has disabled downloads for your account.'
+        });
+      }
+
+      // Get library information for better download title
+      let libraryTitle = metadata.librarySectionTitle || 'Unknown Library';
+      if (!libraryTitle || libraryTitle === 'Unknown Library') {
+        if (metadata.librarySectionID) {
+          try {
+            const libraries = await plexService.getLibraries(token);
+            const library = libraries.find(l => l.key === metadata.librarySectionID);
+            if (library) {
+              libraryTitle = library.title;
+            }
+          } catch (err) {
+            logger.warn('Failed to fetch library info for transcode download', { librarySectionID: metadata.librarySectionID });
+          }
+        }
+      }
+
+      // Generate transcode URL
+      const transcodeUrl = plexService.getTranscodeDownloadUrl(ratingKey, token, qualityPreset);
+
+      logger.debug('Transcode URL generated', {
+        ratingKey,
+        quality: qualityPreset.id,
+        url: transcodeUrl.replace(token, '[REDACTED]')
+      });
+
+      // Stream the transcoded file through our server
+      let response;
+      try {
+        response = await axios({
+          method: 'GET',
+          url: transcodeUrl,
+          responseType: 'stream',
+          httpsAgent: httpsAgent,
+          // Transcode requests may take longer to start
+          timeout: 60000,
+        });
+      } catch (downloadError: any) {
+        if (downloadError.response?.status === 403) {
+          logger.warn('Transcode download denied by Plex server (403)', {
+            userId: req.user?.id,
+            username: req.user?.username,
+            ratingKey,
+            mediaTitle: metadata.title,
+          });
+          return res.status(403).json({
+            error: 'Download not allowed. The Plex server has denied access to this file.'
+          });
+        }
+        throw downloadError;
+      }
+
+      // Log the download with formatted title including library name and quality
+      const formattedTitle = formatMediaTitle(metadata, libraryTitle) + ` [${qualityPreset.label}]`;
+
+      // For transcoded downloads, we don't know exact file size upfront
+      db.logDownload(
+        req.user!.id,
+        formattedTitle,
+        ratingKey,
+        undefined // Size unknown for transcoded content
+      );
+
+      // Set headers for download
+      // Generate filename with quality suffix
+      const originalFilename = metadata.Media?.[0]?.Part?.[0]?.file.split('/').pop() || 'download';
+      const baseName = originalFilename.replace(/\.[^/.]+$/, ''); // Remove extension
+      const filename = `${baseName}_${qualityPreset.id}.${qualityPreset.container}`;
+
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      res.setHeader('Content-Type', response.headers['content-type'] || 'video/mp4');
+      // Note: Content-Length is not available for transcoded streams
+
+      response.data.pipe(res);
+
+      logger.info(`Transcode download started for ${formattedTitle} by user ${req.user?.username}`);
+      return;
+    } catch (error) {
+      logger.error('Transcode download failed', { error });
+      if (!res.headersSent) {
+        return res.status(500).json({ error: 'Transcode download failed' });
       }
       return;
     }

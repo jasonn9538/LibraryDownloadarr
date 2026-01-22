@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import { Header } from '../components/Header';
 import { Sidebar } from '../components/Sidebar';
@@ -6,6 +6,7 @@ import { api } from '../services/api';
 import { MediaItem } from '../types';
 import { useDownloads } from '../contexts/DownloadContext';
 import { useMobileMenu } from '../hooks/useMobileMenu';
+import { QualitySelector, QualityOption } from '../components/QualitySelector';
 
 export const MediaDetail: React.FC = () => {
   const { ratingKey } = useParams<{ ratingKey: string }>();
@@ -18,6 +19,10 @@ export const MediaDetail: React.FC = () => {
   const [tracks, setTracks] = useState<MediaItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
+
+  // State for quality selector
+  const [qualitySelectorOpen, setQualitySelectorOpen] = useState<string | null>(null);
+  const downloadButtonRefs = useRef<{ [key: string]: React.RefObject<HTMLButtonElement> }>({});
 
   useEffect(() => {
     if (ratingKey) {
@@ -89,6 +94,65 @@ export const MediaDetail: React.FC = () => {
   const getDownloadProgress = (partKey: string): number => {
     const download = downloads.find(d => d.partKey === partKey);
     return download?.progress || 0;
+  };
+
+  // Helper to get or create a ref for a download button
+  const getButtonRef = (key: string): React.RefObject<HTMLButtonElement> => {
+    if (!downloadButtonRefs.current[key]) {
+      downloadButtonRefs.current[key] = React.createRef<HTMLButtonElement>();
+    }
+    return downloadButtonRefs.current[key];
+  };
+
+  // Check if media has video (for quality selection)
+  const isVideoMedia = (mediaItem: MediaItem | null): boolean => {
+    if (!mediaItem) return false;
+    return mediaItem.type === 'movie' || mediaItem.type === 'episode';
+  };
+
+  // Open quality selector for video content
+  const openQualitySelector = (itemKey: string) => {
+    setQualitySelectorOpen(itemKey);
+  };
+
+  // Handle quality selection
+  const handleQualitySelect = async (
+    quality: QualityOption,
+    itemRatingKey: string,
+    partKey: string,
+    filename: string,
+    itemTitle: string,
+    fileSize?: number
+  ) => {
+    setQualitySelectorOpen(null);
+
+    // Check file size and warn if over 10GB (only for original quality)
+    if (quality.isOriginal && fileSize) {
+      const tenGB = 10737418240;
+      if (fileSize > tenGB) {
+        const sizeGB = (fileSize / 1073741824).toFixed(2);
+        const confirmed = window.confirm(
+          `This file is ${sizeGB} GB. Large downloads may take a long time and use significant bandwidth.\n\nDo you want to continue?`
+        );
+        if (!confirmed) {
+          return;
+        }
+      }
+    }
+
+    // Generate appropriate filename for transcoded downloads
+    let downloadFilename = filename;
+    if (!quality.isOriginal) {
+      const baseName = filename.replace(/\.[^/.]+$/, '');
+      downloadFilename = `${baseName}_${quality.id}.mp4`;
+    }
+
+    // Use the global download context with quality options
+    await startDownload(itemRatingKey, partKey, downloadFilename, itemTitle, {
+      qualityId: quality.id,
+      qualityLabel: quality.label,
+      isOriginal: quality.isOriginal,
+    });
   };
 
   const handleDownload = async (itemRatingKey: string, partKey: string, filename: string, itemTitle: string, fileSize?: number) => {
@@ -345,63 +409,85 @@ export const MediaDetail: React.FC = () => {
                         <div className="text-gray-400">No tracks available</div>
                       )
                     ) : media.type === 'season' && ratingKey ? (
-                      // Season (clicked directly) - Show episodes
+                      // Season (clicked directly) - Show episodes with quality selection
                       episodesBySeason[ratingKey] && episodesBySeason[ratingKey].length > 0 ? (
                         <div className="space-y-2">
-                          {episodesBySeason[ratingKey].map((episode: MediaItem) => (
-                            <div
-                              key={episode.ratingKey}
-                              className="card p-3 md:p-4 flex flex-col md:flex-row items-start md:items-center justify-between gap-2 md:gap-0"
-                            >
-                              <div className="flex items-center space-x-3">
-                                {episode.thumb && (
-                                  <img
-                                    src={api.getThumbnailUrl(episode.ratingKey, episode.thumb)}
-                                    alt={episode.title}
-                                    className="w-20 h-12 md:w-24 md:h-16 object-cover rounded"
-                                  />
-                                )}
-                                <div>
-                                  <div className="font-medium text-sm md:text-base">{episode.title}</div>
-                                  <div className="text-xs md:text-sm text-gray-400">
-                                    {episode.duration && formatDuration(episode.duration)}
-                                    {episode.Media?.[0]?.Part?.[0]?.size && (
-                                      <> • {formatFileSize(episode.Media[0].Part[0].size)}</>
-                                    )}
+                          {episodesBySeason[ratingKey].map((episode: MediaItem) => {
+                            const buttonKey = `season-ep-${episode.ratingKey}`;
+                            const buttonRef = getButtonRef(buttonKey);
+                            return (
+                              <div
+                                key={episode.ratingKey}
+                                className="card p-3 md:p-4 flex flex-col md:flex-row items-start md:items-center justify-between gap-2 md:gap-0"
+                              >
+                                <div className="flex items-center space-x-3">
+                                  {episode.thumb && (
+                                    <img
+                                      src={api.getThumbnailUrl(episode.ratingKey, episode.thumb)}
+                                      alt={episode.title}
+                                      className="w-20 h-12 md:w-24 md:h-16 object-cover rounded"
+                                    />
+                                  )}
+                                  <div>
+                                    <div className="font-medium text-sm md:text-base">{episode.title}</div>
+                                    <div className="text-xs md:text-sm text-gray-400">
+                                      {episode.duration && formatDuration(episode.duration)}
+                                      {episode.Media?.[0]?.Part?.[0]?.size && (
+                                        <> • {formatFileSize(episode.Media[0].Part[0].size)}</>
+                                      )}
+                                    </div>
                                   </div>
                                 </div>
-                              </div>
-                              {episode.Media?.[0]?.Part?.[0] && (
-                                <div className="flex flex-col items-end gap-2">
-                                  <button
-                                    onClick={() =>
-                                      handleDownload(
-                                        episode.ratingKey,
-                                        episode.Media![0].Part[0].key,
-                                        episode.Media![0].Part[0].file.split('/').pop() || 'download',
-                                        episode.title,
-                                        episode.Media![0].Part[0].size
-                                      )
-                                    }
-                                    disabled={isDownloading(episode.Media![0].Part[0].key)}
-                                    className="btn-primary disabled:opacity-50 disabled:cursor-not-allowed"
-                                  >
-                                    {isDownloading(episode.Media![0].Part[0].key)
-                                      ? `${getDownloadProgress(episode.Media![0].Part[0].key)}%`
-                                      : 'Download'}
-                                  </button>
-                                  {isDownloading(episode.Media![0].Part[0].key) && (
-                                    <div className="w-32 h-2 bg-dark-200 rounded-full overflow-hidden">
-                                      <div
-                                        className="h-full bg-gradient-to-r from-primary-500 to-primary-400 transition-all duration-300 ease-out"
-                                        style={{ width: `${getDownloadProgress(episode.Media![0].Part[0].key)}%` }}
+                                {episode.Media?.[0]?.Part?.[0] && (
+                                  <div className="flex flex-col items-end gap-2 relative">
+                                    <button
+                                      ref={buttonRef}
+                                      onClick={() => openQualitySelector(buttonKey)}
+                                      disabled={isDownloading(episode.Media![0].Part[0].key)}
+                                      className="btn-primary disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+                                    >
+                                      {isDownloading(episode.Media![0].Part[0].key) ? (
+                                        `${getDownloadProgress(episode.Media![0].Part[0].key)}%`
+                                      ) : (
+                                        <>
+                                          Download
+                                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                                          </svg>
+                                        </>
+                                      )}
+                                    </button>
+                                    {isDownloading(episode.Media![0].Part[0].key) && (
+                                      <div className="w-32 h-2 bg-dark-200 rounded-full overflow-hidden">
+                                        <div
+                                          className="h-full bg-gradient-to-r from-primary-500 to-primary-400 transition-all duration-300 ease-out"
+                                          style={{ width: `${getDownloadProgress(episode.Media![0].Part[0].key)}%` }}
+                                        />
+                                      </div>
+                                    )}
+                                    {qualitySelectorOpen === buttonKey && (
+                                      <QualitySelector
+                                        ratingKey={episode.ratingKey}
+                                        isOpen={true}
+                                        buttonRef={buttonRef}
+                                        onCancel={() => setQualitySelectorOpen(null)}
+                                        onSelect={(quality) =>
+                                          handleQualitySelect(
+                                            quality,
+                                            episode.ratingKey,
+                                            episode.Media![0].Part[0].key,
+                                            episode.Media![0].Part[0].file.split('/').pop() || 'download',
+                                            episode.title,
+                                            episode.Media![0].Part[0].size
+                                          )
+                                        }
                                       />
-                                    </div>
-                                  )}
-                                </div>
-                              )}
-                            </div>
-                          ))}
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
                         </div>
                       ) : (
                         <div className="text-gray-400">No episodes available</div>
@@ -454,60 +540,82 @@ export const MediaDetail: React.FC = () => {
                               {expandedSeasons[season.ratingKey] && (
                                 <div className="border-t border-dark-50 p-3 md:p-4 space-y-2">
                                   {episodesBySeason[season.ratingKey] ? (
-                                    episodesBySeason[season.ratingKey].map((episode) => (
-                                      <div
-                                        key={episode.ratingKey}
-                                        className="card p-3 md:p-4 flex flex-col md:flex-row items-start md:items-center justify-between gap-2 md:gap-0"
-                                      >
-                                        <div className="flex items-center space-x-3">
-                                          {episode.thumb && (
-                                            <img
-                                              src={api.getThumbnailUrl(episode.ratingKey, episode.thumb)}
-                                              alt={episode.title}
-                                              className="w-20 h-12 md:w-24 md:h-16 object-cover rounded"
-                                            />
-                                          )}
-                                          <div>
-                                            <div className="font-medium text-sm md:text-base">{episode.title}</div>
-                                            <div className="text-xs md:text-sm text-gray-400">
-                                              {episode.duration && formatDuration(episode.duration)}
-                                              {episode.Media?.[0]?.Part?.[0]?.size && (
-                                                <> • {formatFileSize(episode.Media[0].Part[0].size)}</>
-                                              )}
+                                    episodesBySeason[season.ratingKey].map((episode) => {
+                                      const buttonKey = `show-ep-${episode.ratingKey}`;
+                                      const buttonRef = getButtonRef(buttonKey);
+                                      return (
+                                        <div
+                                          key={episode.ratingKey}
+                                          className="card p-3 md:p-4 flex flex-col md:flex-row items-start md:items-center justify-between gap-2 md:gap-0"
+                                        >
+                                          <div className="flex items-center space-x-3">
+                                            {episode.thumb && (
+                                              <img
+                                                src={api.getThumbnailUrl(episode.ratingKey, episode.thumb)}
+                                                alt={episode.title}
+                                                className="w-20 h-12 md:w-24 md:h-16 object-cover rounded"
+                                              />
+                                            )}
+                                            <div>
+                                              <div className="font-medium text-sm md:text-base">{episode.title}</div>
+                                              <div className="text-xs md:text-sm text-gray-400">
+                                                {episode.duration && formatDuration(episode.duration)}
+                                                {episode.Media?.[0]?.Part?.[0]?.size && (
+                                                  <> • {formatFileSize(episode.Media[0].Part[0].size)}</>
+                                                )}
+                                              </div>
                                             </div>
                                           </div>
-                                        </div>
-                                        {episode.Media?.[0]?.Part?.[0] && (
-                                          <div className="flex flex-col items-end gap-2">
-                                            <button
-                                              onClick={() =>
-                                                handleDownload(
-                                                  episode.ratingKey,
-                                                  episode.Media![0].Part[0].key,
-                                                  episode.Media![0].Part[0].file.split('/').pop() || 'download',
-                                                  episode.title,
-                                                  episode.Media![0].Part[0].size
-                                                )
-                                              }
-                                              disabled={isDownloading(episode.Media![0].Part[0].key)}
-                                              className="btn-primary disabled:opacity-50 disabled:cursor-not-allowed"
-                                            >
-                                              {isDownloading(episode.Media![0].Part[0].key)
-                                                ? `${getDownloadProgress(episode.Media![0].Part[0].key)}%`
-                                                : 'Download'}
-                                            </button>
-                                            {isDownloading(episode.Media![0].Part[0].key) && (
-                                              <div className="w-32 h-2 bg-dark-200 rounded-full overflow-hidden">
-                                                <div
-                                                  className="h-full bg-gradient-to-r from-primary-500 to-primary-400 transition-all duration-300 ease-out"
-                                                  style={{ width: `${getDownloadProgress(episode.Media![0].Part[0].key)}%` }}
+                                          {episode.Media?.[0]?.Part?.[0] && (
+                                            <div className="flex flex-col items-end gap-2 relative">
+                                              <button
+                                                ref={buttonRef}
+                                                onClick={() => openQualitySelector(buttonKey)}
+                                                disabled={isDownloading(episode.Media![0].Part[0].key)}
+                                                className="btn-primary disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+                                              >
+                                                {isDownloading(episode.Media![0].Part[0].key) ? (
+                                                  `${getDownloadProgress(episode.Media![0].Part[0].key)}%`
+                                                ) : (
+                                                  <>
+                                                    Download
+                                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                                                    </svg>
+                                                  </>
+                                                )}
+                                              </button>
+                                              {isDownloading(episode.Media![0].Part[0].key) && (
+                                                <div className="w-32 h-2 bg-dark-200 rounded-full overflow-hidden">
+                                                  <div
+                                                    className="h-full bg-gradient-to-r from-primary-500 to-primary-400 transition-all duration-300 ease-out"
+                                                    style={{ width: `${getDownloadProgress(episode.Media![0].Part[0].key)}%` }}
+                                                  />
+                                                </div>
+                                              )}
+                                              {qualitySelectorOpen === buttonKey && (
+                                                <QualitySelector
+                                                  ratingKey={episode.ratingKey}
+                                                  isOpen={true}
+                                                  buttonRef={buttonRef}
+                                                  onCancel={() => setQualitySelectorOpen(null)}
+                                                  onSelect={(quality) =>
+                                                    handleQualitySelect(
+                                                      quality,
+                                                      episode.ratingKey,
+                                                      episode.Media![0].Part[0].key,
+                                                      episode.Media![0].Part[0].file.split('/').pop() || 'download',
+                                                      episode.title,
+                                                      episode.Media![0].Part[0].size
+                                                    )
+                                                  }
                                                 />
-                                              </div>
-                                            )}
-                                          </div>
-                                        )}
-                                      </div>
-                                    ))
+                                              )}
+                                            </div>
+                                          )}
+                                        </div>
+                                      );
+                                    })
                                   ) : (
                                     <div className="text-center text-gray-400 py-4">Loading episodes...</div>
                                   )}
@@ -520,7 +628,7 @@ export const MediaDetail: React.FC = () => {
                         <div className="text-gray-400">No seasons available</div>
                       )
                     ) : (
-                      // Movie or other media type - Show direct download
+                      // Movie or other media type - Show direct download with quality selection
                       media.Media && media.Media.length > 0 ? (
                         <div className="space-y-4">
                           {media.Media.map((mediaPart, idx) => (
@@ -537,35 +645,73 @@ export const MediaDetail: React.FC = () => {
                                     )}
                                   </div>
                                 </div>
-                                {mediaPart.Part.map((part, partIdx) => (
-                                  <div key={partIdx} className="flex flex-col items-end gap-2">
-                                    <button
-                                      onClick={() =>
-                                        handleDownload(
-                                          ratingKey!,
-                                          part.key,
-                                          part.file.split('/').pop() || 'download',
-                                          media.title,
-                                          part.size
-                                        )
-                                      }
-                                      disabled={isDownloading(part.key)}
-                                      className="btn-primary disabled:opacity-50 disabled:cursor-not-allowed"
-                                    >
-                                      {isDownloading(part.key)
-                                        ? `${getDownloadProgress(part.key)}%`
-                                        : 'Download'}
-                                    </button>
-                                    {isDownloading(part.key) && (
-                                      <div className="w-32 h-2 bg-dark-200 rounded-full overflow-hidden">
-                                        <div
-                                          className="h-full bg-gradient-to-r from-primary-500 to-primary-400 transition-all duration-300 ease-out"
-                                          style={{ width: `${getDownloadProgress(part.key)}%` }}
+                                {mediaPart.Part.map((part, partIdx) => {
+                                  const buttonKey = `movie-${idx}-${partIdx}`;
+                                  const buttonRef = getButtonRef(buttonKey);
+                                  return (
+                                    <div key={partIdx} className="flex flex-col items-end gap-2 relative">
+                                      <button
+                                        ref={buttonRef}
+                                        onClick={() => {
+                                          // For video content, show quality selector
+                                          if (isVideoMedia(media)) {
+                                            openQualitySelector(buttonKey);
+                                          } else {
+                                            // For non-video, direct download
+                                            handleDownload(
+                                              ratingKey!,
+                                              part.key,
+                                              part.file.split('/').pop() || 'download',
+                                              media.title,
+                                              part.size
+                                            );
+                                          }
+                                        }}
+                                        disabled={isDownloading(part.key)}
+                                        className="btn-primary disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+                                      >
+                                        {isDownloading(part.key) ? (
+                                          `${getDownloadProgress(part.key)}%`
+                                        ) : (
+                                          <>
+                                            Download
+                                            {isVideoMedia(media) && (
+                                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                                              </svg>
+                                            )}
+                                          </>
+                                        )}
+                                      </button>
+                                      {isDownloading(part.key) && (
+                                        <div className="w-32 h-2 bg-dark-200 rounded-full overflow-hidden">
+                                          <div
+                                            className="h-full bg-gradient-to-r from-primary-500 to-primary-400 transition-all duration-300 ease-out"
+                                            style={{ width: `${getDownloadProgress(part.key)}%` }}
+                                          />
+                                        </div>
+                                      )}
+                                      {qualitySelectorOpen === buttonKey && (
+                                        <QualitySelector
+                                          ratingKey={ratingKey!}
+                                          isOpen={true}
+                                          buttonRef={buttonRef}
+                                          onCancel={() => setQualitySelectorOpen(null)}
+                                          onSelect={(quality) =>
+                                            handleQualitySelect(
+                                              quality,
+                                              ratingKey!,
+                                              part.key,
+                                              part.file.split('/').pop() || 'download',
+                                              media.title,
+                                              part.size
+                                            )
+                                          }
                                         />
-                                      </div>
-                                    )}
-                                  </div>
-                                ))}
+                                      )}
+                                    </div>
+                                  );
+                                })}
                               </div>
                             </div>
                           ))}

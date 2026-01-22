@@ -161,6 +161,39 @@ class ApiClient {
     return `/api/media/${ratingKey}/download?partKey=${encodeURIComponent(partKey)}`;
   }
 
+  // Get available quality options for a media item
+  async getQualityOptions(ratingKey: string): Promise<{
+    qualities: Array<{
+      id: string;
+      label: string;
+      height: number;
+      width: number;
+      isOriginal: boolean;
+      bitrate?: number;
+      codec?: string;
+      container?: string;
+      fileSize?: number;
+      maxVideoBitrate?: number;
+      estimatedSize?: number;
+    }>;
+    source: {
+      height: number;
+      width: number;
+      resolution: string;
+      bitrate: number;
+      codec: string;
+      container: string;
+    };
+  }> {
+    const response = await this.client.get(`/media/${ratingKey}/qualities`);
+    return response.data;
+  }
+
+  // Get download URL for transcoded quality
+  getTranscodeDownloadUrl(ratingKey: string, qualityId: string): string {
+    return `/api/media/${ratingKey}/download/transcode?quality=${encodeURIComponent(qualityId)}`;
+  }
+
   async getSeasonSize(seasonRatingKey: string): Promise<{ totalSize: number; fileCount: number; totalSizeGB: string }> {
     const response = await this.client.get<{ totalSize: number; fileCount: number; totalSizeGB: string }>(
       `/media/season/${seasonRatingKey}/size`

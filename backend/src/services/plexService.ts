@@ -20,6 +20,32 @@ export interface PlexLibrary {
   type: string;
 }
 
+// Quality presets for transcoding
+// Users can only select qualities at or below their source resolution
+export interface QualityPreset {
+  id: string;
+  label: string;
+  height: number;          // Height in pixels (used for comparison)
+  width: number;           // Width in pixels
+  maxVideoBitrate: number; // Max video bitrate in kbps
+  videoCodec: string;      // Target video codec
+  audioCodec: string;      // Target audio codec
+  container: string;       // Output container format
+}
+
+export const QUALITY_PRESETS: QualityPreset[] = [
+  { id: '4k', label: '4K (2160p)', height: 2160, width: 3840, maxVideoBitrate: 20000, videoCodec: 'h264', audioCodec: 'aac', container: 'mp4' },
+  { id: '1080p', label: '1080p', height: 1080, width: 1920, maxVideoBitrate: 8000, videoCodec: 'h264', audioCodec: 'aac', container: 'mp4' },
+  { id: '720p', label: '720p', height: 720, width: 1280, maxVideoBitrate: 4000, videoCodec: 'h264', audioCodec: 'aac', container: 'mp4' },
+  { id: '480p', label: '480p', height: 480, width: 854, maxVideoBitrate: 2000, videoCodec: 'h264', audioCodec: 'aac', container: 'mp4' },
+  { id: '360p', label: '360p (SD)', height: 360, width: 640, maxVideoBitrate: 1000, videoCodec: 'h264', audioCodec: 'aac', container: 'mp4' },
+];
+
+// Get available quality options based on source resolution (only show options <= source)
+export function getAvailableQualities(sourceHeight: number): QualityPreset[] {
+  return QUALITY_PRESETS.filter(preset => preset.height <= sourceHeight);
+}
+
 export interface PlexMedia {
   ratingKey: string;
   key: string;
@@ -711,6 +737,39 @@ export class PlexService {
     }
 
     return `${baseUrl}${partKey}?download=1&X-Plex-Token=${token}`;
+  }
+
+  // Generate a transcoded download URL for a specific quality preset
+  // This uses Plex's universal transcoder to convert the video on-the-fly
+  getTranscodeDownloadUrl(
+    ratingKey: string,
+    token: string,
+    quality: QualityPreset
+  ): string {
+    const baseUrl = this.plexUrl;
+    if (!baseUrl) {
+      throw new Error('Plex server URL not configured');
+    }
+
+    // Build the transcode URL with quality parameters
+    const params = new URLSearchParams({
+      'path': `/library/metadata/${ratingKey}`,
+      'mediaIndex': '0',
+      'partIndex': '0',
+      'protocol': 'http',
+      'directStream': '0',        // Force transcoding
+      'directPlay': '0',          // Disable direct play
+      'videoResolution': `${quality.width}x${quality.height}`,
+      'maxVideoBitrate': quality.maxVideoBitrate.toString(),
+      'videoCodec': quality.videoCodec,
+      'audioCodec': quality.audioCodec,
+      'subtitleSize': '100',
+      'copyTimestamps': '1',
+      'defeatContentTypeRestriction': '1',
+      'X-Plex-Token': token,
+    });
+
+    return `${baseUrl}/video/:/transcode/universal/start.${quality.container}?${params.toString()}`;
   }
 
   getThumbnailUrl(thumbPath: string, token: string): string {
