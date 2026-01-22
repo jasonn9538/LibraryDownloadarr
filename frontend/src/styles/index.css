@@ -48,3 +48,13 @@
 ::-webkit-scrollbar-thumb:hover {
   background: #3a3a3a;
 }
+
+/* Shimmer animation for transcoding progress */
+@keyframes shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}

@@ -41,6 +41,28 @@ export const DownloadManager: React.FC = () => {
                     <div className="h-full bg-gradient-to-r from-primary-500 to-primary-400 animate-pulse" />
                   </div>
                 </>
+              ) : download.isTranscoded ? (
+                // Indeterminate progress for transcoded downloads
+                <>
+                  <div className="flex items-center justify-between text-xs mb-1">
+                    <span className="text-gray-400">
+                      Transcoding to {download.resolution || 'lower resolution'}...
+                    </span>
+                    <span className="text-secondary-400 font-semibold animate-pulse">◉</span>
+                  </div>
+                  <div className="w-full h-2 bg-dark-200 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-gradient-to-r from-secondary-500 via-primary-500 to-secondary-500 animate-[shimmer_2s_ease-in-out_infinite]"
+                      style={{
+                        backgroundSize: '200% 100%',
+                        animation: 'shimmer 2s ease-in-out infinite'
+                      }}
+                    />
+                  </div>
+                  <div className="text-[10px] text-gray-500 mt-1">
+                    Converting video on server - this may take a while
+                  </div>
+                </>
               ) : (
                 // Percentage-based progress for single file downloads
                 <>
