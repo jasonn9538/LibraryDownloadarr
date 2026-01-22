@@ -739,54 +739,13 @@ export class PlexService {
     return `${baseUrl}${partKey}?download=1&X-Plex-Token=${token}`;
   }
 
-  // Generate a transcoded download URL for a specific resolution preset
-  // This uses Plex's universal transcoder to convert the video on-the-fly
-  getTranscodeDownloadUrl(
-    ratingKey: string,
-    token: string,
-    resolution: ResolutionPreset
-  ): string {
+  // Get the direct download URL for a media file (used for ffmpeg transcoding)
+  getDirectDownloadUrl(partKey: string, token: string): string {
     const baseUrl = this.plexUrl;
     if (!baseUrl) {
       throw new Error('Plex server URL not configured');
     }
-
-    // Generate a unique session ID for this transcode request
-    const sessionId = `libdl-${Date.now()}-${Math.random().toString(36).substring(2, 15)}`;
-
-    // Build the transcode URL with resolution parameters
-    // The universal transcoder requires specific parameters to work correctly
-    const params = new URLSearchParams({
-      'path': `/library/metadata/${ratingKey}`,
-      'mediaIndex': '0',
-      'partIndex': '0',
-      'protocol': 'http',
-      'offset': '0',
-      'fastSeek': '1',
-      'directStream': '0',        // Force transcoding
-      'directPlay': '0',          // Disable direct play
-      'videoResolution': `${resolution.width}x${resolution.height}`,
-      'maxVideoBitrate': resolution.maxVideoBitrate.toString(),
-      'videoQuality': '100',
-      'videoCodec': resolution.videoCodec,
-      'audioCodec': resolution.audioCodec,
-      'audioBitrate': '160',
-      'audioChannels': '2',
-      'subtitleSize': '100',
-      'copyTimestamps': '1',
-      'defeatContentTypeRestriction': '1',
-      'autoAdjustQuality': '0',
-      'session': sessionId,
-      'X-Plex-Session-Identifier': sessionId,
-      'X-Plex-Client-Identifier': config.plex.clientIdentifier,
-      'X-Plex-Product': config.plex.product,
-      'X-Plex-Version': config.plex.version,
-      'X-Plex-Platform': 'Web',
-      'X-Plex-Device': 'Browser',
-      'X-Plex-Token': token,
-    });
-
-    return `${baseUrl}/video/:/transcode/universal/start.${resolution.container}?${params.toString()}`;
+    return `${baseUrl}${partKey}?download=1&X-Plex-Token=${token}`;
   }
 
   getThumbnailUrl(thumbPath: string, token: string): string {

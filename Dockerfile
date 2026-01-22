@@ -33,6 +33,9 @@ FROM node:20-alpine
 
 WORKDIR /app
 
+# Install ffmpeg for video transcoding
+RUN apk add --no-cache ffmpeg
+
 # Install production dependencies for backend
 COPY backend/package*.json ./
 RUN npm ci --production

@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { spawn } from 'child_process';
 import { DatabaseService } from '../models/database';
 import { plexService, RESOLUTION_PRESETS, getAvailableResolutions } from '../services/plexService';
 import { logger } from '../utils/logger';
@@ -572,7 +573,7 @@ export const createMediaRouter = (db: DatabaseService) => {
     }
   });
 
-  // Download media with transcoding to a specific resolution
+  // Download media with transcoding to a specific resolution using ffmpeg
   router.get('/:ratingKey/download/transcode', authMiddleware, async (req: AuthRequest, res) => {
     try {
       const { ratingKey } = req.params;
@@ -608,6 +609,11 @@ export const createMediaRouter = (db: DatabaseService) => {
         return res.status(404).json({ error: 'No media found for this item' });
       }
 
+      const partKey = sourceMedia.Part?.[0]?.key;
+      if (!partKey) {
+        return res.status(404).json({ error: 'No media file found for this item' });
+      }
+
       const sourceHeight = sourceMedia.height || 0;
       if (resolutionPreset.height > sourceHeight) {
         return res.status(400).json({
@@ -615,11 +621,10 @@ export const createMediaRouter = (db: DatabaseService) => {
         });
       }
 
-      // Log metadata for debugging permission issues
-      logger.info('Transcode download request', {
+      // Log metadata for debugging
+      logger.info('Transcode download request (ffmpeg)', {
         userId: req.user?.id,
         username: req.user?.username,
-        isAdmin: req.user?.isAdmin,
         ratingKey,
         mediaTitle: metadata.title,
         requestedResolution: resolutionPreset.label,
@@ -659,38 +664,29 @@ export const createMediaRouter = (db: DatabaseService) => {
         }
       }
 
-      // Generate transcode URL
-      const transcodeUrl = plexService.getTranscodeDownloadUrl(ratingKey, token, resolutionPreset);
+      // Get the direct download URL from Plex
+      const downloadUrl = plexService.getDirectDownloadUrl(partKey, token);
 
-      logger.debug('Transcode URL generated', {
+      logger.debug('Starting ffmpeg transcode', {
         ratingKey,
         resolution: resolutionPreset.id,
-        url: transcodeUrl.replace(token, '[REDACTED]')
+        targetHeight: resolutionPreset.height,
+        maxBitrate: resolutionPreset.maxVideoBitrate,
       });
 
-      // Stream the transcoded file through our server
-      let response;
+      // Fetch the original file from Plex
+      let plexResponse;
       try {
-        response = await axios({
+        plexResponse = await axios({
           method: 'GET',
-          url: transcodeUrl,
+          url: downloadUrl,
           responseType: 'stream',
           httpsAgent: httpsAgent,
-          // Transcode requests may take longer to start
-          timeout: 60000,
         });
       } catch (downloadError: any) {
-        logger.error('Plex transcode request failed', {
-          status: downloadError.response?.status,
-          statusText: downloadError.response?.statusText,
-          error: downloadError.message,
-          url: transcodeUrl.replace(token, '[REDACTED]'),
-        });
-
         if (downloadError.response?.status === 403) {
-          logger.warn('Transcode download denied by Plex server (403)', {
+          logger.warn('Download denied by Plex server (403)', {
             userId: req.user?.id,
-            username: req.user?.username,
             ratingKey,
             mediaTitle: metadata.title,
           });
@@ -701,10 +697,8 @@ export const createMediaRouter = (db: DatabaseService) => {
         throw downloadError;
       }
 
-      // Log the download with formatted title including library name and resolution
+      // Log the download with formatted title including resolution
       const formattedTitle = formatMediaTitle(metadata, libraryTitle) + ` [${resolutionPreset.label}]`;
-
-      // For transcoded downloads, we don't know exact file size upfront
       db.logDownload(
         req.user!.id,
         formattedTitle,
@@ -712,17 +706,103 @@ export const createMediaRouter = (db: DatabaseService) => {
         undefined // Size unknown for transcoded content
       );
 
-      // Set headers for download
       // Generate filename with resolution suffix
-      const originalFilename = metadata.Media?.[0]?.Part?.[0]?.file.split('/').pop() || 'download';
+      const originalFilename = sourceMedia.Part?.[0]?.file.split('/').pop() || 'download';
       const baseName = originalFilename.replace(/\.[^/.]+$/, ''); // Remove extension
-      const filename = `${baseName}_${resolutionPreset.id}.${resolutionPreset.container}`;
+      const filename = `${baseName}_${resolutionPreset.id}.mp4`;
 
+      // Set response headers
       res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-      res.setHeader('Content-Type', response.headers['content-type'] || 'video/mp4');
+      res.setHeader('Content-Type', 'video/mp4');
       // Note: Content-Length is not available for transcoded streams
 
-      response.data.pipe(res);
+      // Build ffmpeg arguments
+      // -i pipe:0 = read from stdin
+      // -vf scale = scale video to target height, -2 ensures width is divisible by 2
+      // -c:v libx264 = H.264 video codec
+      // -preset fast = balance between speed and compression
+      // -crf 23 = constant rate factor for quality (lower = better, 18-28 is reasonable)
+      // -maxrate/-bufsize = constrain bitrate
+      // -c:a aac = AAC audio codec
+      // -b:a 160k = audio bitrate
+      // -movflags = required flags for streaming MP4
+      // -f mp4 pipe:1 = output MP4 to stdout
+      const ffmpegArgs = [
+        '-i', 'pipe:0',
+        '-vf', `scale=-2:${resolutionPreset.height}`,
+        '-c:v', 'libx264',
+        '-preset', 'fast',
+        '-crf', '23',
+        '-maxrate', `${resolutionPreset.maxVideoBitrate}k`,
+        '-bufsize', `${resolutionPreset.maxVideoBitrate * 2}k`,
+        '-c:a', 'aac',
+        '-b:a', '160k',
+        '-movflags', 'frag_keyframe+empty_moov+faststart',
+        '-f', 'mp4',
+        'pipe:1'
+      ];
+
+      logger.debug('ffmpeg command', { args: ffmpegArgs.join(' ') });
+
+      // Spawn ffmpeg process
+      const ffmpeg = spawn('ffmpeg', ffmpegArgs, {
+        stdio: ['pipe', 'pipe', 'pipe']
+      });
+
+      let ffmpegError = '';
+
+      // Collect stderr for error reporting
+      ffmpeg.stderr.on('data', (data) => {
+        const message = data.toString();
+        ffmpegError += message;
+        // Log progress info (ffmpeg outputs progress to stderr)
+        if (message.includes('frame=') || message.includes('time=')) {
+          logger.debug('ffmpeg progress', { progress: message.trim().substring(0, 100) });
+        }
+      });
+
+      ffmpeg.on('error', (err) => {
+        logger.error('ffmpeg process error', { error: err.message });
+        if (!res.headersSent) {
+          res.status(500).json({ error: 'Transcoding failed - ffmpeg error' });
+        }
+      });
+
+      ffmpeg.on('close', (code) => {
+        if (code !== 0 && code !== null) {
+          logger.error('ffmpeg exited with error', {
+            code,
+            stderr: ffmpegError.substring(ffmpegError.length - 500) // Last 500 chars
+          });
+        } else {
+          logger.info(`Transcode download completed for ${formattedTitle}`);
+        }
+      });
+
+      // Handle client disconnect
+      res.on('close', () => {
+        if (!ffmpeg.killed) {
+          logger.info('Client disconnected, killing ffmpeg process');
+          ffmpeg.kill('SIGTERM');
+        }
+      });
+
+      // Pipe: Plex -> ffmpeg -> response
+      plexResponse.data.pipe(ffmpeg.stdin);
+      ffmpeg.stdout.pipe(res);
+
+      // Handle errors on the input stream
+      plexResponse.data.on('error', (err: Error) => {
+        logger.error('Plex stream error', { error: err.message });
+        ffmpeg.kill('SIGTERM');
+      });
+
+      ffmpeg.stdin.on('error', (err: Error) => {
+        // EPIPE is expected if ffmpeg closes early
+        if ((err as NodeJS.ErrnoException).code !== 'EPIPE') {
+          logger.error('ffmpeg stdin error', { error: err.message });
+        }
+      });
 
       logger.info(`Transcode download started for ${formattedTitle} by user ${req.user?.username}`);
       return;
@@ -730,8 +810,6 @@ export const createMediaRouter = (db: DatabaseService) => {
       logger.error('Transcode download failed', {
         error: error.message,
         stack: error.stack,
-        response: error.response?.data,
-        status: error.response?.status,
       });
       if (!res.headersSent) {
         return res.status(500).json({ error: 'Transcode download failed' });
