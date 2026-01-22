@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { api } from '../services/api';
 
 export interface ResolutionOption {
@@ -33,7 +34,32 @@ export const ResolutionSelector: React.FC<ResolutionSelectorProps> = ({
   const [resolutions, setResolutions] = useState<ResolutionOption[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
+  const [position, setPosition] = useState({ top: 0, left: 0 });
   const dropdownRef = useRef<HTMLDivElement>(null);
+
+  // Calculate position based on button location
+  useEffect(() => {
+    if (isOpen && buttonRef?.current) {
+      const rect = buttonRef.current.getBoundingClientRect();
+      const dropdownWidth = 280;
+
+      // Position below the button, aligned to the right edge
+      let left = rect.right - dropdownWidth;
+      const top = rect.bottom + 8; // 8px gap
+
+      // Ensure dropdown doesn't go off the left edge
+      if (left < 8) {
+        left = 8;
+      }
+
+      // Ensure dropdown doesn't go off the right edge
+      if (left + dropdownWidth > window.innerWidth - 8) {
+        left = window.innerWidth - dropdownWidth - 8;
+      }
+
+      setPosition({ top, left });
+    }
+  }, [isOpen, buttonRef]);
 
   useEffect(() => {
     if (isOpen) {
@@ -54,12 +80,21 @@ export const ResolutionSelector: React.FC<ResolutionSelectorProps> = ({
       }
     };
 
+    // Close on scroll
+    const handleScroll = () => {
+      if (isOpen) {
+        onCancel();
+      }
+    };
+
     if (isOpen) {
       document.addEventListener('mousedown', handleClickOutside);
+      window.addEventListener('scroll', handleScroll, true);
     }
 
     return () => {
       document.removeEventListener('mousedown', handleClickOutside);
+      window.removeEventListener('scroll', handleScroll, true);
     };
   }, [isOpen, onCancel, buttonRef]);
 
@@ -87,10 +122,14 @@ export const ResolutionSelector: React.FC<ResolutionSelectorProps> = ({
 
   if (!isOpen) return null;
 
-  return (
+  const dropdown = (
     <div
       ref={dropdownRef}
-      className="absolute right-0 top-full mt-2 z-50 bg-dark-100 border border-dark-50 rounded-lg shadow-xl min-w-[280px] overflow-hidden"
+      className="fixed z-[9999] bg-dark-100 border border-dark-50 rounded-lg shadow-xl min-w-[280px] overflow-hidden"
+      style={{
+        top: position.top,
+        left: position.left,
+      }}
     >
       <div className="p-3 border-b border-dark-50 bg-dark-200">
         <h3 className="text-sm font-semibold text-white">Select Resolution</h3>
@@ -173,4 +212,7 @@ export const ResolutionSelector: React.FC<ResolutionSelectorProps> = ({
       </div>
     </div>
   );
+
+  // Use portal to render at document body level to avoid overflow clipping
+  return createPortal(dropdown, document.body);
 };
