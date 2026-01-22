@@ -10,7 +10,6 @@ export const Transcodes: React.FC = () => {
   const [allJobs, setAllJobs] = useState<TranscodeJob[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [showAll, setShowAll] = useState(false);
-  const [downloadingJobId, setDownloadingJobId] = useState<string | null>(null);
 
   const loadJobs = useCallback(async () => {
     try {
@@ -43,34 +42,22 @@ export const Transcodes: React.FC = () => {
     }
   };
 
-  const handleDownload = async (job: TranscodeJob) => {
-    setDownloadingJobId(job.id);
-    try {
-      const url = api.getTranscodeJobDownloadUrl(job.id);
-      const response = await fetch(url, {
-        headers: {
-          Authorization: `Bearer ${localStorage.getItem('token')}`,
-        },
-      });
+  const handleDownload = (job: TranscodeJob) => {
+    // Use direct browser download with token in query string
+    // This avoids buffering the entire file in memory
+    const token = localStorage.getItem('token');
+    const url = `${api.getTranscodeJobDownloadUrl(job.id)}?token=${encodeURIComponent(token || '')}`;
 
-      if (!response.ok) {
-        throw new Error('Download failed');
-      }
+    // Create a hidden iframe to trigger the download
+    const iframe = document.createElement('iframe');
+    iframe.style.display = 'none';
+    iframe.src = url;
+    document.body.appendChild(iframe);
 
-      const blob = await response.blob();
-      const downloadUrl = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = downloadUrl;
-      a.download = job.filename;
-      document.body.appendChild(a);
-      a.click();
-      window.URL.revokeObjectURL(downloadUrl);
-      document.body.removeChild(a);
-    } catch (error) {
-      console.error('Failed to download:', error);
-    } finally {
-      setDownloadingJobId(null);
-    }
+    // Clean up after a delay
+    setTimeout(() => {
+      document.body.removeChild(iframe);
+    }, 5000);
   };
 
   const formatFileSize = (bytes?: number): string => {
@@ -197,20 +184,10 @@ export const Transcodes: React.FC = () => {
           {job.status === 'completed' && (
             <button
               onClick={() => handleDownload(job)}
-              disabled={downloadingJobId === job.id}
               className="btn-primary px-4 py-2 text-sm flex items-center gap-2"
             >
-              {downloadingJobId === job.id ? (
-                <>
-                  <span className="animate-spin">⏳</span>
-                  Downloading...
-                </>
-              ) : (
-                <>
-                  <span>⬇️</span>
-                  Download
-                </>
-              )}
+              <span>⬇️</span>
+              Download
             </button>
           )}
           {(job.status === 'pending' || job.status === 'transcoding') && isOwnJob && (
