@@ -239,6 +239,11 @@ export const ResolutionSelector: React.FC<ResolutionSelectorProps> = ({
                       ORIGINAL
                     </span>
                   )}
+                  {resolution.height === 720 && !resolution.isOriginal && (
+                    <span className="px-1.5 py-0.5 text-[10px] bg-blue-500/20 text-blue-400 rounded">
+                      Best for mobile
+                    </span>
+                  )}
                 </div>
                 <div className="text-xs text-gray-400 mt-0.5">
                   {resolution.isOriginal ? (
