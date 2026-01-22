@@ -271,6 +271,11 @@ class ApiClient {
     return response.data.jobs;
   }
 
+  async getAllTranscodes(): Promise<TranscodeJob[]> {
+    const response = await this.client.get<{ jobs: TranscodeJob[] }>('/transcodes/all');
+    return response.data.jobs;
+  }
+
   async getTranscodeCounts(): Promise<{ pending: number; transcoding: number; completed: number; error: number }> {
     const response = await this.client.get('/transcodes/counts');
     return response.data;

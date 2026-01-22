@@ -246,6 +246,14 @@ class TranscodeManager {
   }
 
   /**
+   * Get all transcodes (pending, transcoding, completed) for "show all" view
+   */
+  getAllTranscodes(): TranscodeJob[] {
+    if (!this.db) return [];
+    return this.db.getAllTranscodes();
+  }
+
+  /**
    * Get job counts for badge display
    */
   getJobCounts(userId?: string): { pending: number; transcoding: number; completed: number; error: number } {

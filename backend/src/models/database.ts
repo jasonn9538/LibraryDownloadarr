@@ -470,6 +470,28 @@ export class DatabaseService {
     return rows.map(row => this.mapTranscodeJob(row));
   }
 
+  getAllTranscodes(): TranscodeJob[] {
+    // Get all transcodes (pending, transcoding, completed) that haven't expired
+    const stmt = this.db.prepare(`
+      SELECT tj.*,
+             COALESCE(au.username, pu.username) as username
+      FROM transcode_jobs tj
+      LEFT JOIN admin_users au ON tj.user_id = au.id
+      LEFT JOIN plex_users pu ON tj.user_id = pu.id
+      WHERE tj.status IN ('pending', 'transcoding', 'completed')
+        AND (tj.expires_at IS NULL OR tj.expires_at > ? OR tj.status NOT IN ('completed'))
+      ORDER BY
+        CASE tj.status
+          WHEN 'transcoding' THEN 1
+          WHEN 'pending' THEN 2
+          WHEN 'completed' THEN 3
+        END,
+        tj.created_at DESC
+    `);
+    const rows = stmt.all(Date.now()) as any[];
+    return rows.map(row => this.mapTranscodeJob(row));
+  }
+
   getPendingTranscodeJobs(limit: number = 10): TranscodeJob[] {
     const stmt = this.db.prepare(`
       SELECT tj.*,

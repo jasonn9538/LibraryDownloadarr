@@ -50,7 +50,7 @@ export const createTranscodesRouter = (db: DatabaseService) => {
     }
   });
 
-  // Get all available transcodes (for "show all" toggle)
+  // Get all available completed transcodes (for "show all" toggle - legacy)
   router.get('/available', authMiddleware, async (_req: AuthRequest, res) => {
     try {
       const jobs = transcodeManager.getAllAvailableTranscodes();
@@ -58,6 +58,17 @@ export const createTranscodesRouter = (db: DatabaseService) => {
     } catch (error) {
       logger.error('Failed to get available transcodes', { error });
       return res.status(500).json({ error: 'Failed to get available transcodes' });
+    }
+  });
+
+  // Get all transcodes (pending, transcoding, completed) for "show all" view
+  router.get('/all', authMiddleware, async (_req: AuthRequest, res) => {
+    try {
+      const jobs = transcodeManager.getAllTranscodes();
+      return res.json({ jobs });
+    } catch (error) {
+      logger.error('Failed to get all transcodes', { error });
+      return res.status(500).json({ error: 'Failed to get all transcodes' });
     }
   });
 

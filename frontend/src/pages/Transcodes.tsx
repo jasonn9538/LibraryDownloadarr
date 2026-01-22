@@ -7,19 +7,19 @@ import { api, TranscodeJob } from '../services/api';
 export const Transcodes: React.FC = () => {
   const { isMobileMenuOpen, toggleMobileMenu, closeMobileMenu } = useMobileMenu();
   const [jobs, setJobs] = useState<TranscodeJob[]>([]);
-  const [availableJobs, setAvailableJobs] = useState<TranscodeJob[]>([]);
+  const [allJobs, setAllJobs] = useState<TranscodeJob[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [showAllAvailable, setShowAllAvailable] = useState(false);
+  const [showAll, setShowAll] = useState(false);
   const [downloadingJobId, setDownloadingJobId] = useState<string | null>(null);
 
   const loadJobs = useCallback(async () => {
     try {
-      const [userJobs, available] = await Promise.all([
+      const [userJobs, all] = await Promise.all([
         api.getTranscodeJobs(),
-        api.getAvailableTranscodes(),
+        api.getAllTranscodes(),
       ]);
       setJobs(userJobs);
-      setAvailableJobs(available);
+      setAllJobs(all);
     } catch (error) {
       console.error('Failed to load transcode jobs:', error);
     } finally {
@@ -96,96 +96,106 @@ export const Transcodes: React.FC = () => {
     return `${minutes}m remaining`;
   };
 
+  // Choose which jobs to display based on toggle
+  const displayJobs = showAll ? allJobs : jobs;
+
   // Filter jobs by status
-  const completedJobs = jobs.filter(j => j.status === 'completed');
-  const transcodingJobs = jobs.filter(j => j.status === 'transcoding');
-  const pendingJobs = jobs.filter(j => j.status === 'pending');
-  const errorJobs = jobs.filter(j => j.status === 'error');
+  const completedJobs = displayJobs.filter(j => j.status === 'completed');
+  const transcodingJobs = displayJobs.filter(j => j.status === 'transcoding');
+  const pendingJobs = displayJobs.filter(j => j.status === 'pending');
+  const errorJobs = displayJobs.filter(j => j.status === 'error');
 
-  // Get available jobs that aren't in user's jobs (from other users)
+  // Get user's job IDs to identify their own jobs
   const userJobIds = new Set(jobs.map(j => j.id));
-  const otherAvailableJobs = availableJobs.filter(j => !userJobIds.has(j.id));
 
-  const renderJobCard = (job: TranscodeJob, showOwner: boolean = false) => (
-    <div
-      key={job.id}
-      className="bg-dark-100 border border-dark-50 rounded-lg p-4 flex flex-col sm:flex-row sm:items-center gap-3"
-    >
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2 flex-wrap">
-          <h3 className="font-medium text-white truncate">{job.mediaTitle}</h3>
-          <span className="px-2 py-0.5 text-xs bg-dark-200 text-gray-300 rounded">
-            {job.resolutionLabel}
-          </span>
-        </div>
-        <div className="text-sm text-gray-400 mt-1 flex flex-wrap gap-x-4 gap-y-1">
-          {job.status === 'completed' && (
-            <>
-              <span>{formatFileSize(job.fileSize)}</span>
-              <span className="text-green-400">{formatTimeRemaining(job.expiresAt)}</span>
-            </>
-          )}
-          {job.status === 'transcoding' && (
-            <span className="text-blue-400">Transcoding... {job.progress}%</span>
-          )}
-          {job.status === 'pending' && (
-            <span className="text-gray-400">Waiting in queue...</span>
-          )}
-          {job.status === 'error' && (
-            <span className="text-red-400">{job.error || 'Transcode failed'}</span>
-          )}
-          {showOwner && job.username && (
-            <span className="text-gray-500">by {job.username}</span>
-          )}
-        </div>
-        {job.status === 'transcoding' && (
-          <div className="mt-2 w-full bg-dark-200 rounded-full h-2">
-            <div
-              className="bg-blue-500 h-2 rounded-full transition-all duration-300"
-              style={{ width: `${job.progress}%` }}
-            />
+  const renderJobCard = (job: TranscodeJob) => {
+    const isOwnJob = userJobIds.has(job.id);
+
+    return (
+      <div
+        key={job.id}
+        className={`bg-dark-100 border rounded-lg p-4 flex flex-col sm:flex-row sm:items-center gap-3 ${
+          showAll && !isOwnJob ? 'border-dark-50 opacity-80' : 'border-dark-50'
+        }`}
+      >
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <h3 className="font-medium text-white truncate">{job.mediaTitle}</h3>
+            <span className="px-2 py-0.5 text-xs bg-dark-200 text-gray-300 rounded">
+              {job.resolutionLabel}
+            </span>
+            {showAll && job.username && (
+              <span className="px-2 py-0.5 text-xs bg-dark-200 text-gray-500 rounded">
+                by {job.username}
+              </span>
+            )}
           </div>
-        )}
-      </div>
-      <div className="flex items-center gap-2 flex-shrink-0">
-        {job.status === 'completed' && (
-          <button
-            onClick={() => handleDownload(job)}
-            disabled={downloadingJobId === job.id}
-            className="btn-primary px-4 py-2 text-sm flex items-center gap-2"
-          >
-            {downloadingJobId === job.id ? (
+          <div className="text-sm text-gray-400 mt-1 flex flex-wrap gap-x-4 gap-y-1">
+            {job.status === 'completed' && (
               <>
-                <span className="animate-spin">⏳</span>
-                Downloading...
-              </>
-            ) : (
-              <>
-                <span>⬇️</span>
-                Download
+                <span>{formatFileSize(job.fileSize)}</span>
+                <span className="text-green-400">{formatTimeRemaining(job.expiresAt)}</span>
               </>
             )}
-          </button>
-        )}
-        {(job.status === 'pending' || job.status === 'transcoding') && (
-          <button
-            onClick={() => handleCancel(job.id)}
-            className="btn-secondary px-4 py-2 text-sm text-red-400 hover:text-red-300"
-          >
-            Cancel
-          </button>
-        )}
-        {(job.status === 'error' || job.status === 'completed') && (
-          <button
-            onClick={() => handleCancel(job.id)}
-            className="px-3 py-2 text-sm text-gray-400 hover:text-gray-300"
-          >
-            Remove
-          </button>
-        )}
+            {job.status === 'transcoding' && (
+              <span className="text-blue-400">Transcoding... {job.progress}%</span>
+            )}
+            {job.status === 'pending' && (
+              <span className="text-gray-400">Waiting in queue...</span>
+            )}
+            {job.status === 'error' && (
+              <span className="text-red-400">{job.error || 'Transcode failed'}</span>
+            )}
+          </div>
+          {job.status === 'transcoding' && (
+            <div className="mt-2 w-full bg-dark-200 rounded-full h-2">
+              <div
+                className="bg-blue-500 h-2 rounded-full transition-all duration-300"
+                style={{ width: `${job.progress}%` }}
+              />
+            </div>
+          )}
+        </div>
+        <div className="flex items-center gap-2 flex-shrink-0">
+          {job.status === 'completed' && (
+            <button
+              onClick={() => handleDownload(job)}
+              disabled={downloadingJobId === job.id}
+              className="btn-primary px-4 py-2 text-sm flex items-center gap-2"
+            >
+              {downloadingJobId === job.id ? (
+                <>
+                  <span className="animate-spin">⏳</span>
+                  Downloading...
+                </>
+              ) : (
+                <>
+                  <span>⬇️</span>
+                  Download
+                </>
+              )}
+            </button>
+          )}
+          {(job.status === 'pending' || job.status === 'transcoding') && isOwnJob && (
+            <button
+              onClick={() => handleCancel(job.id)}
+              className="btn-secondary px-4 py-2 text-sm text-red-400 hover:text-red-300"
+            >
+              Cancel
+            </button>
+          )}
+          {(job.status === 'error' || job.status === 'completed') && isOwnJob && (
+            <button
+              onClick={() => handleCancel(job.id)}
+              className="px-3 py-2 text-sm text-gray-400 hover:text-gray-300"
+            >
+              Remove
+            </button>
+          )}
+        </div>
       </div>
-    </div>
-  );
+    );
+  };
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -194,28 +204,29 @@ export const Transcodes: React.FC = () => {
         <Sidebar isOpen={isMobileMenuOpen} onClose={closeMobileMenu} />
         <main className="flex-1 p-4 md:p-8 overflow-y-auto">
           <div className="max-w-4xl mx-auto">
-            <h2 className="text-2xl md:text-3xl font-bold mb-2">Transcodes</h2>
+            <div className="flex items-center justify-between mb-2">
+              <h2 className="text-2xl md:text-3xl font-bold">Transcodes</h2>
+              <label className="flex items-center gap-2 text-sm text-gray-400 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={showAll}
+                  onChange={(e) => setShowAll(e.target.checked)}
+                  className="rounded border-gray-600 bg-dark-200 text-primary-500 focus:ring-primary-500"
+                />
+                Show all users
+              </label>
+            </div>
             <p className="text-gray-400 mb-6">
-              Manage your transcoding queue and download completed files. Files are available for 1 week after completion.
+              {showAll
+                ? 'Showing all transcodes from all users. Files are available for 1 week after completion.'
+                : 'Manage your transcoding queue and download completed files. Files are available for 1 week after completion.'
+              }
             </p>
 
             {isLoading ? (
               <div className="text-center text-gray-400 py-8">Loading...</div>
             ) : (
               <div className="space-y-8">
-                {/* Ready to Download */}
-                {completedJobs.length > 0 && (
-                  <section>
-                    <h3 className="text-lg font-semibold text-green-400 mb-3 flex items-center gap-2">
-                      <span>✅</span>
-                      Ready to Download ({completedJobs.length})
-                    </h3>
-                    <div className="space-y-3">
-                      {completedJobs.map(job => renderJobCard(job))}
-                    </div>
-                  </section>
-                )}
-
                 {/* Processing */}
                 {transcodingJobs.length > 0 && (
                   <section>
@@ -242,6 +253,19 @@ export const Transcodes: React.FC = () => {
                   </section>
                 )}
 
+                {/* Ready to Download */}
+                {completedJobs.length > 0 && (
+                  <section>
+                    <h3 className="text-lg font-semibold text-green-400 mb-3 flex items-center gap-2">
+                      <span>✅</span>
+                      Ready to Download ({completedJobs.length})
+                    </h3>
+                    <div className="space-y-3">
+                      {completedJobs.map(job => renderJobCard(job))}
+                    </div>
+                  </section>
+                )}
+
                 {/* Errors */}
                 {errorJobs.length > 0 && (
                   <section>
@@ -256,34 +280,19 @@ export const Transcodes: React.FC = () => {
                 )}
 
                 {/* Empty state */}
-                {jobs.length === 0 && !showAllAvailable && (
+                {displayJobs.length === 0 && (
                   <div className="text-center py-12 text-gray-400">
                     <div className="text-4xl mb-4">📥</div>
-                    <p className="text-lg mb-2">No transcodes yet</p>
+                    <p className="text-lg mb-2">
+                      {showAll ? 'No transcodes in progress' : 'No transcodes yet'}
+                    </p>
                     <p className="text-sm">
-                      When you download a video with a different resolution, it will appear here.
+                      {showAll
+                        ? 'When anyone starts a transcode, it will appear here.'
+                        : 'When you download a video with a different resolution, it will appear here.'
+                      }
                     </p>
                   </div>
-                )}
-
-                {/* All Available Toggle */}
-                {otherAvailableJobs.length > 0 && (
-                  <section className="pt-4 border-t border-dark-50">
-                    <button
-                      onClick={() => setShowAllAvailable(!showAllAvailable)}
-                      className="flex items-center gap-2 text-sm text-gray-400 hover:text-gray-300 mb-3"
-                    >
-                      <span>{showAllAvailable ? '▼' : '▶'}</span>
-                      <span>
-                        Show all available transcodes ({otherAvailableJobs.length} from other users)
-                      </span>
-                    </button>
-                    {showAllAvailable && (
-                      <div className="space-y-3">
-                        {otherAvailableJobs.map(job => renderJobCard(job, true))}
-                      </div>
-                    )}
-                  </section>
                 )}
               </div>
             )}
