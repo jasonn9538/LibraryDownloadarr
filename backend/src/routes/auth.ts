@@ -1,9 +1,88 @@
-import { Router } from 'express';
+import { Router, Request } from 'express';
 import bcrypt from 'bcrypt';
 import { DatabaseService } from '../models/database';
 import { plexService } from '../services/plexService';
 import { logger } from '../utils/logger';
 import { AuthRequest, createAuthMiddleware } from '../middleware/auth';
+
+// Brute force protection: track failed login attempts per IP
+const MAX_FAILED_ATTEMPTS = 5;
+const LOCKOUT_DURATION_MS = 15 * 60 * 1000; // 15 minutes
+
+interface FailedAttempt {
+  count: number;
+  firstAttempt: number;
+  lockedUntil?: number;
+}
+
+const failedAttempts = new Map<string, FailedAttempt>();
+
+// Clean up old entries periodically (every hour)
+setInterval(() => {
+  const now = Date.now();
+  for (const [ip, attempt] of failedAttempts.entries()) {
+    // Remove entries that are no longer locked and haven't had activity in 30 minutes
+    if (!attempt.lockedUntil && now - attempt.firstAttempt > 30 * 60 * 1000) {
+      failedAttempts.delete(ip);
+    }
+    // Remove entries whose lockout has expired
+    if (attempt.lockedUntil && now > attempt.lockedUntil) {
+      failedAttempts.delete(ip);
+    }
+  }
+}, 60 * 60 * 1000);
+
+function getClientIp(req: Request): string {
+  // Support for reverse proxies
+  const forwarded = req.headers['x-forwarded-for'];
+  if (forwarded) {
+    const ips = (typeof forwarded === 'string' ? forwarded : forwarded[0]).split(',');
+    return ips[0].trim();
+  }
+  return req.ip || req.socket.remoteAddress || 'unknown';
+}
+
+function isIpBlocked(ip: string): { blocked: boolean; remainingMs?: number } {
+  const attempt = failedAttempts.get(ip);
+  if (!attempt) return { blocked: false };
+
+  if (attempt.lockedUntil) {
+    const now = Date.now();
+    if (now < attempt.lockedUntil) {
+      return { blocked: true, remainingMs: attempt.lockedUntil - now };
+    }
+    // Lockout expired, reset
+    failedAttempts.delete(ip);
+    return { blocked: false };
+  }
+
+  return { blocked: false };
+}
+
+function recordFailedAttempt(ip: string): { blocked: boolean; attemptsRemaining: number } {
+  const now = Date.now();
+  let attempt = failedAttempts.get(ip);
+
+  if (!attempt) {
+    attempt = { count: 1, firstAttempt: now };
+    failedAttempts.set(ip, attempt);
+    return { blocked: false, attemptsRemaining: MAX_FAILED_ATTEMPTS - 1 };
+  }
+
+  attempt.count++;
+
+  if (attempt.count >= MAX_FAILED_ATTEMPTS) {
+    attempt.lockedUntil = now + LOCKOUT_DURATION_MS;
+    logger.warn('IP blocked due to too many failed login attempts', { ip, attempts: attempt.count });
+    return { blocked: true, attemptsRemaining: 0 };
+  }
+
+  return { blocked: false, attemptsRemaining: MAX_FAILED_ATTEMPTS - attempt.count };
+}
+
+function clearFailedAttempts(ip: string): void {
+  failedAttempts.delete(ip);
+}
 
 export const createAuthRouter = (db: DatabaseService) => {
   const router = Router();
@@ -63,6 +142,18 @@ export const createAuthRouter = (db: DatabaseService) => {
   // Admin login
   router.post('/login', async (req, res) => {
     try {
+      const ip = getClientIp(req);
+
+      // Check if IP is blocked
+      const blockStatus = isIpBlocked(ip);
+      if (blockStatus.blocked) {
+        const minutesRemaining = Math.ceil((blockStatus.remainingMs || 0) / 60000);
+        logger.warn('Blocked login attempt from locked IP', { ip });
+        return res.status(429).json({
+          error: `Too many failed login attempts. Try again in ${minutesRemaining} minutes.`
+        });
+      }
+
       const { username, password } = req.body;
 
       if (!username || !password) {
@@ -71,18 +162,35 @@ export const createAuthRouter = (db: DatabaseService) => {
 
       const user = db.getAdminUserByUsername(username);
       if (!user) {
+        const result = recordFailedAttempt(ip);
+        logger.warn('Failed login attempt - user not found', { ip, username });
+        if (result.blocked) {
+          return res.status(429).json({
+            error: 'Too many failed login attempts. Try again in 15 minutes.'
+          });
+        }
         return res.status(401).json({ error: 'Invalid credentials' });
       }
 
       const isValid = await bcrypt.compare(password, user.passwordHash);
       if (!isValid) {
+        const result = recordFailedAttempt(ip);
+        logger.warn('Failed login attempt - wrong password', { ip, username });
+        if (result.blocked) {
+          return res.status(429).json({
+            error: 'Too many failed login attempts. Try again in 15 minutes.'
+          });
+        }
         return res.status(401).json({ error: 'Invalid credentials' });
       }
+
+      // Successful login - clear failed attempts
+      clearFailedAttempts(ip);
 
       db.updateAdminLastLogin(user.id);
       const session = db.createSession(user.id);
 
-      logger.info(`User logged in: ${username}`);
+      logger.info(`User logged in: ${username}`, { ip });
 
       return res.json({
         user: {
