@@ -34,30 +34,54 @@ export const ResolutionSelector: React.FC<ResolutionSelectorProps> = ({
   const [resolutions, setResolutions] = useState<ResolutionOption[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
-  const [position, setPosition] = useState({ top: 0, left: 0 });
+  const [position, setPosition] = useState({ top: 0, left: 0, maxHeight: 400 });
   const dropdownRef = useRef<HTMLDivElement>(null);
 
-  // Calculate position based on button location
+  // Calculate position based on button location and viewport
   useEffect(() => {
     if (isOpen && buttonRef?.current) {
       const rect = buttonRef.current.getBoundingClientRect();
       const dropdownWidth = 280;
+      const headerHeight = 60; // Approximate header height
+      const footerHeight = 50; // Approximate footer/cancel button height
+      const padding = 16; // Padding from viewport edges
 
-      // Position below the button, aligned to the right edge
+      // Calculate available space below and above the button
+      const spaceBelow = window.innerHeight - rect.bottom - padding;
+      const spaceAbove = rect.top - padding;
+
+      // Determine if we should show above or below
+      const minHeight = 200; // Minimum usable height
+      let top: number;
+      let maxHeight: number;
+
+      if (spaceBelow >= minHeight || spaceBelow >= spaceAbove) {
+        // Show below the button
+        top = rect.bottom + 8;
+        maxHeight = Math.min(400, spaceBelow - 8);
+      } else {
+        // Show above the button
+        maxHeight = Math.min(400, spaceAbove - 8);
+        top = rect.top - maxHeight - headerHeight - footerHeight - 8;
+      }
+
+      // Ensure minimum height
+      maxHeight = Math.max(minHeight, maxHeight);
+
+      // Calculate horizontal position
       let left = rect.right - dropdownWidth;
-      const top = rect.bottom + 8; // 8px gap
 
       // Ensure dropdown doesn't go off the left edge
-      if (left < 8) {
-        left = 8;
+      if (left < padding) {
+        left = padding;
       }
 
       // Ensure dropdown doesn't go off the right edge
-      if (left + dropdownWidth > window.innerWidth - 8) {
-        left = window.innerWidth - dropdownWidth - 8;
+      if (left + dropdownWidth > window.innerWidth - padding) {
+        left = window.innerWidth - dropdownWidth - padding;
       }
 
-      setPosition({ top, left });
+      setPosition({ top, left, maxHeight });
     }
   }, [isOpen, buttonRef]);
 
@@ -125,24 +149,25 @@ export const ResolutionSelector: React.FC<ResolutionSelectorProps> = ({
   const dropdown = (
     <div
       ref={dropdownRef}
-      className="fixed z-[9999] bg-dark-100 border border-dark-50 rounded-lg shadow-xl min-w-[280px] overflow-hidden"
+      className="fixed z-[9999] bg-dark-100 border border-dark-50 rounded-lg shadow-xl min-w-[280px] max-w-[calc(100vw-32px)] flex flex-col"
       style={{
         top: position.top,
         left: position.left,
+        maxHeight: position.maxHeight,
       }}
     >
-      <div className="p-3 border-b border-dark-50 bg-dark-200">
+      <div className="p-3 border-b border-dark-50 bg-dark-200 flex-shrink-0">
         <h3 className="text-sm font-semibold text-white">Select Resolution</h3>
         <p className="text-xs text-gray-400 mt-1">Choose download resolution</p>
       </div>
 
       {isLoading ? (
-        <div className="p-4 text-center text-gray-400">
+        <div className="p-4 text-center text-gray-400 flex-shrink-0">
           <div className="animate-spin inline-block w-5 h-5 border-2 border-gray-400 border-t-transparent rounded-full mb-2" />
           <p className="text-sm">Loading options...</p>
         </div>
       ) : error ? (
-        <div className="p-4 text-center text-red-400">
+        <div className="p-4 text-center text-red-400 flex-shrink-0">
           <p className="text-sm">{error}</p>
           <button
             onClick={loadResolutions}
@@ -152,7 +177,7 @@ export const ResolutionSelector: React.FC<ResolutionSelectorProps> = ({
           </button>
         </div>
       ) : (
-        <div className="max-h-[300px] overflow-y-auto">
+        <div className="flex-1 overflow-y-auto overscroll-contain">
           {resolutions.map((resolution, index) => (
             <button
               key={resolution.id}
@@ -202,7 +227,7 @@ export const ResolutionSelector: React.FC<ResolutionSelectorProps> = ({
         </div>
       )}
 
-      <div className="p-2 border-t border-dark-50 bg-dark-200">
+      <div className="p-2 border-t border-dark-50 bg-dark-200 flex-shrink-0">
         <button
           onClick={onCancel}
           className="w-full px-3 py-1.5 text-xs text-gray-400 hover:text-white transition-colors"
