@@ -96,6 +96,38 @@ export const Transcodes: React.FC = () => {
     return `${minutes}m remaining`;
   };
 
+  const formatEta = (job: TranscodeJob): string => {
+    if (!job.startedAt || job.progress <= 0) return '';
+
+    const now = Date.now();
+    const elapsed = now - job.startedAt;
+
+    // Need at least 5 seconds of data for a reasonable estimate
+    if (elapsed < 5000) return 'Calculating...';
+
+    // Calculate rate: progress per millisecond
+    const rate = job.progress / elapsed;
+    if (rate <= 0) return '';
+
+    // Calculate remaining time
+    const remainingProgress = 100 - job.progress;
+    const remainingMs = remainingProgress / rate;
+
+    // Format the ETA
+    const seconds = Math.ceil(remainingMs / 1000);
+    if (seconds < 60) return `~${seconds}s remaining`;
+
+    const minutes = Math.floor(seconds / 60);
+    const remainingSeconds = seconds % 60;
+    if (minutes < 60) {
+      return `~${minutes}m ${remainingSeconds}s remaining`;
+    }
+
+    const hours = Math.floor(minutes / 60);
+    const remainingMinutes = minutes % 60;
+    return `~${hours}h ${remainingMinutes}m remaining`;
+  };
+
   // Choose which jobs to display based on toggle
   const displayJobs = showAll ? allJobs : jobs;
 
@@ -138,7 +170,12 @@ export const Transcodes: React.FC = () => {
               </>
             )}
             {job.status === 'transcoding' && (
-              <span className="text-blue-400">Transcoding... {job.progress}%</span>
+              <span className="text-blue-400">
+                Transcoding... {job.progress}%
+                {job.progress > 0 && (
+                  <span className="text-gray-500 ml-2">{formatEta(job)}</span>
+                )}
+              </span>
             )}
             {job.status === 'pending' && (
               <span className="text-gray-400">Waiting in queue...</span>
