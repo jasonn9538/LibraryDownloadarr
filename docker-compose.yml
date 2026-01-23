@@ -27,6 +27,12 @@ services:
       # Files are kept for 1 week after transcoding completes
       # Example: /mnt/SSD/transcode:/app/transcode
       - ./transcode:/app/transcode
+      # Optional: Mount your media directories for direct file access during transcoding
+      # This avoids downloading via Plex API and significantly speeds up transcoding
+      # Configure path mappings in Settings to map Plex paths to container paths
+      # Example: If Plex sees files at /media/Movies, mount that same path:
+      # - /path/to/your/media:/mnt/media:ro
+      # Then in Settings, add a path mapping: /media → /mnt/media
     # GPU access for hardware encoding (Intel QSV / AMD VAAPI)
     devices:
       - /dev/dri:/dev/dri

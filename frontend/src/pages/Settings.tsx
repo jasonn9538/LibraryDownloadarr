@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Header } from '../components/Header';
 import { Sidebar } from '../components/Sidebar';
 import { api } from '../services/api';
-import { Settings as SettingsType } from '../types';
+import { Settings as SettingsType, PathMapping } from '../types';
 import { useMobileMenu } from '../hooks/useMobileMenu';
 
 export const Settings: React.FC = () => {
@@ -17,6 +17,11 @@ export const Settings: React.FC = () => {
   const [isSaving, setIsSaving] = useState(false);
   const [isTesting, setIsTesting] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  // Path mappings state
+  const [pathMappings, setPathMappings] = useState<PathMapping[]>([]);
+  const [isSavingMappings, setIsSavingMappings] = useState(false);
+  const [mappingsMessage, setMappingsMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   // Password change state
   const [currentPassword, setCurrentPassword] = useState('');
@@ -34,6 +39,7 @@ export const Settings: React.FC = () => {
       const data = await api.getSettings();
       setSettings(data);
       setPlexUrl(data.plexUrl);
+      setPathMappings(data.pathMappings || []);
     } catch (err) {
       setMessage({ type: 'error', text: 'Failed to load settings' });
     } finally {
@@ -146,6 +152,37 @@ export const Settings: React.FC = () => {
     }
   };
 
+  const handleAddMapping = () => {
+    setPathMappings([...pathMappings, { plexPath: '', localPath: '' }]);
+  };
+
+  const handleRemoveMapping = (index: number) => {
+    setPathMappings(pathMappings.filter((_, i) => i !== index));
+  };
+
+  const handleMappingChange = (index: number, field: 'plexPath' | 'localPath', value: string) => {
+    const updated = [...pathMappings];
+    updated[index][field] = value;
+    setPathMappings(updated);
+  };
+
+  const handleSaveMappings = async () => {
+    setIsSavingMappings(true);
+    setMappingsMessage(null);
+
+    try {
+      // Filter out empty mappings
+      const validMappings = pathMappings.filter(m => m.plexPath.trim() && m.localPath.trim());
+      await api.updateSettings({ pathMappings: validMappings } as any);
+      setPathMappings(validMappings);
+      setMappingsMessage({ type: 'success', text: 'Path mappings saved successfully' });
+    } catch (err: any) {
+      setMappingsMessage({ type: 'error', text: err.response?.data?.error || 'Failed to save path mappings' });
+    } finally {
+      setIsSavingMappings(false);
+    }
+  };
+
   if (isLoading) {
     return (
       <div className="min-h-screen flex flex-col">
@@ -254,6 +291,89 @@ export const Settings: React.FC = () => {
                   </button>
                 </div>
               </form>
+            </div>
+
+            <div className="card p-4 md:p-6 mt-4 md:mt-6">
+              <h2 className="text-xl md:text-2xl font-semibold mb-2">Path Mappings</h2>
+              <p className="text-xs md:text-sm text-gray-500 mb-4">
+                Map Plex media paths to local container paths for faster transcoding.
+                When the container has direct access to media files, transcoding can use local files
+                instead of downloading via the Plex API.
+              </p>
+
+              <div className="space-y-3">
+                {pathMappings.map((mapping, index) => (
+                  <div key={index} className="flex flex-col sm:flex-row gap-2 p-3 bg-dark-200 rounded-lg">
+                    <div className="flex-1">
+                      <label className="block text-xs text-gray-400 mb-1">Plex Path</label>
+                      <input
+                        type="text"
+                        className="input text-sm"
+                        placeholder="/media/Movies"
+                        value={mapping.plexPath}
+                        onChange={(e) => handleMappingChange(index, 'plexPath', e.target.value)}
+                      />
+                    </div>
+                    <div className="flex items-center justify-center text-gray-500 py-2 sm:py-0 sm:px-2 sm:pt-5">
+                      →
+                    </div>
+                    <div className="flex-1">
+                      <label className="block text-xs text-gray-400 mb-1">Container Path</label>
+                      <input
+                        type="text"
+                        className="input text-sm"
+                        placeholder="/mnt/media/Movies"
+                        value={mapping.localPath}
+                        onChange={(e) => handleMappingChange(index, 'localPath', e.target.value)}
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveMapping(index)}
+                      className="text-red-400 hover:text-red-300 p-2 sm:pt-5"
+                      title="Remove mapping"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                ))}
+
+                {pathMappings.length === 0 && (
+                  <div className="text-center py-4 text-gray-500 text-sm">
+                    No path mappings configured. Transcoding will download files via the Plex API.
+                  </div>
+                )}
+
+                <div className="flex flex-col sm:flex-row gap-3 pt-2">
+                  <button
+                    type="button"
+                    onClick={handleAddMapping}
+                    className="btn-secondary text-sm"
+                  >
+                    + Add Mapping
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleSaveMappings}
+                    disabled={isSavingMappings}
+                    className="btn-primary text-sm"
+                  >
+                    {isSavingMappings ? 'Saving...' : 'Save Mappings'}
+                  </button>
+                </div>
+
+                {mappingsMessage && (
+                  <div
+                    className={`px-4 py-3 rounded-lg text-xs md:text-sm ${
+                      mappingsMessage.type === 'success'
+                        ? 'bg-green-500/10 border border-green-500/20 text-green-400'
+                        : 'bg-red-500/10 border border-red-500/20 text-red-400'
+                    }`}
+                  >
+                    {mappingsMessage.text}
+                  </div>
+                )}
+              </div>
             </div>
 
             <div className="card p-4 md:p-6 mt-4 md:mt-6">

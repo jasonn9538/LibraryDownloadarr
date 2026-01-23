@@ -69,9 +69,15 @@ export interface PlexPin {
   url: string;
 }
 
+export interface PathMapping {
+  plexPath: string;
+  localPath: string;
+}
+
 export interface Settings {
   plexUrl: string;
   hasPlexToken: boolean;
   plexMachineId?: string;
   plexServerName?: string;
+  pathMappings?: PathMapping[];
 }

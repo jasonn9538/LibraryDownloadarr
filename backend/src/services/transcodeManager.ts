@@ -411,8 +411,10 @@ class TranscodeManager {
       title: job.mediaTitle,
     });
 
-    // Helper to clean up temp file
+    // Helper to clean up temp file (only if we downloaded it, not for local files)
+    let useLocalFile = false; // Will be set to true if using local file access
     const cleanupTempFile = () => {
+      if (useLocalFile) return; // Don't delete local files!
       try {
         if (fs.existsSync(inputTempPath)) {
           fs.unlinkSync(inputTempPath);
@@ -431,11 +433,12 @@ class TranscodeManager {
         throw new Error('Plex server not configured');
       }
 
-      // Get media metadata to find the part key
+      // Get media metadata to find the part key and file path
       plexService.setServerConnection(serverUrl, token);
       const metadata = await plexService.getMediaMetadata(job.ratingKey, token);
 
       const partKey = metadata.Media?.[0]?.Part?.[0]?.key;
+      const plexFilePath = metadata.Media?.[0]?.Part?.[0]?.file;
       if (!partKey) {
         throw new Error('Media file not found');
       }
@@ -443,37 +446,73 @@ class TranscodeManager {
       const totalDuration = metadata.Media?.[0]?.duration || 0;
       const durationSeconds = totalDuration / 1000;
 
-      // Get direct download URL
-      const downloadUrl = plexService.getDirectDownloadUrl(partKey, token);
-
       // Detect hardware encoder
       const hwEncoder = await detectHardwareEncoder();
 
-      // Download to temp file first (required for hardware encoding to work reliably)
-      logger.info('Downloading source file', { jobId: job.id, title: job.mediaTitle });
+      // Try to use local file access if path mappings are configured
+      let inputPath = inputTempPath;
 
-      const plexResponse = await axios({
-        method: 'GET',
-        url: downloadUrl,
-        responseType: 'stream',
-        httpsAgent,
-      });
+      if (plexFilePath) {
+        const pathMappingsJson = this.db.getSetting('path_mappings') || '[]';
+        let pathMappings: Array<{ plexPath: string; localPath: string }> = [];
+        try {
+          pathMappings = JSON.parse(pathMappingsJson);
+        } catch {
+          pathMappings = [];
+        }
 
-      // Write to temp file
-      const writeStream = fs.createWriteStream(inputTempPath);
-      await new Promise<void>((resolve, reject) => {
-        plexResponse.data.pipe(writeStream);
-        writeStream.on('finish', resolve);
-        writeStream.on('error', reject);
-        plexResponse.data.on('error', reject);
-      });
+        // Try to map Plex path to local path
+        for (const mapping of pathMappings) {
+          if (plexFilePath.startsWith(mapping.plexPath)) {
+            const localFilePath = plexFilePath.replace(mapping.plexPath, mapping.localPath);
+            if (fs.existsSync(localFilePath)) {
+              inputPath = localFilePath;
+              useLocalFile = true;
+              logger.info('Using local file access', {
+                jobId: job.id,
+                plexPath: plexFilePath,
+                localPath: localFilePath,
+              });
+              break;
+            } else {
+              logger.warn('Local file not found, falling back to HTTP download', {
+                jobId: job.id,
+                localPath: localFilePath,
+              });
+            }
+          }
+        }
+      }
 
-      logger.info('Source file downloaded, starting encode', {
+      // If no local file access, download via HTTP
+      if (!useLocalFile) {
+        const downloadUrl = plexService.getDirectDownloadUrl(partKey, token);
+        logger.info('Downloading source file via HTTP', { jobId: job.id, title: job.mediaTitle });
+
+        const plexResponse = await axios({
+          method: 'GET',
+          url: downloadUrl,
+          responseType: 'stream',
+          httpsAgent,
+        });
+
+        // Write to temp file
+        const writeStream = fs.createWriteStream(inputTempPath);
+        await new Promise<void>((resolve, reject) => {
+          plexResponse.data.pipe(writeStream);
+          writeStream.on('finish', resolve);
+          writeStream.on('error', reject);
+          plexResponse.data.on('error', reject);
+        });
+      }
+
+      logger.info('Starting encode', {
         jobId: job.id,
         hwEncoder: hwEncoder || 'software',
         title: job.mediaTitle,
-        inputFile: inputTempPath,
+        inputFile: inputPath,
         outputFile: outputPath,
+        localFileAccess: useLocalFile,
       });
 
       // Build ffmpeg arguments based on encoder type
@@ -485,7 +524,7 @@ class TranscodeManager {
         ffmpegArgs = [
           '-init_hw_device', 'vaapi=va:/dev/dri/renderD128',
           '-filter_hw_device', 'va',
-          '-i', inputTempPath,
+          '-i', inputPath,
           '-map', '0:v:0',           // Map first video stream
           '-map', '0:a?',            // Map all audio streams (optional)
           '-map', '0:s?',            // Map all subtitle streams (optional)
@@ -514,7 +553,7 @@ class TranscodeManager {
         ffmpegArgs = [
           '-init_hw_device', 'qsv=qsv:hw',
           '-filter_hw_device', 'qsv',
-          '-i', inputTempPath,
+          '-i', inputPath,
           '-map', '0:v:0',           // Map first video stream
           '-map', '0:a?',            // Map all audio streams (optional)
           '-map', '0:s?',            // Map all subtitle streams (optional)
@@ -540,7 +579,7 @@ class TranscodeManager {
       } else {
         // Software encoding (libx264)
         ffmpegArgs = [
-          '-i', inputTempPath,
+          '-i', inputPath,
           '-map', '0:v:0',           // Map first video stream
           '-map', '0:a?',            // Map all audio streams (optional)
           '-map', '0:s?',            // Map all subtitle streams (optional)

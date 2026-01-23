@@ -16,6 +16,14 @@ export const createSettingsRouter = (db: DatabaseService) => {
       const plexToken = db.getSetting('plex_token') || '';
       const plexMachineId = db.getSetting('plex_machine_id') || '';
       const plexServerName = db.getSetting('plex_server_name') || '';
+      const pathMappingsJson = db.getSetting('path_mappings') || '[]';
+
+      let pathMappings: Array<{ plexPath: string; localPath: string }> = [];
+      try {
+        pathMappings = JSON.parse(pathMappingsJson);
+      } catch {
+        pathMappings = [];
+      }
 
       return res.json({
         settings: {
@@ -23,6 +31,7 @@ export const createSettingsRouter = (db: DatabaseService) => {
           hasPlexToken: !!plexToken,
           plexMachineId,
           plexServerName,
+          pathMappings,
         },
       });
     } catch (error) {
@@ -34,13 +43,23 @@ export const createSettingsRouter = (db: DatabaseService) => {
   // Update settings (admin only)
   router.put('/', authMiddleware, adminMiddleware, async (req: AuthRequest, res) => {
     try {
-      const { plexUrl, plexToken } = req.body;
+      const { plexUrl, plexToken, pathMappings } = req.body;
 
       if (plexUrl) {
         db.setSetting('plex_url', plexUrl);
       }
       if (plexToken) {
         db.setSetting('plex_token', plexToken);
+      }
+      if (pathMappings !== undefined) {
+        // Validate path mappings format
+        if (Array.isArray(pathMappings)) {
+          const validMappings = pathMappings.filter(
+            (m: any) => m && typeof m.plexPath === 'string' && typeof m.localPath === 'string'
+          );
+          db.setSetting('path_mappings', JSON.stringify(validMappings));
+          logger.info('Path mappings updated', { count: validMappings.length });
+        }
       }
 
       // Update Plex service connection and auto-fetch server identity
