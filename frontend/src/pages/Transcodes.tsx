@@ -42,6 +42,17 @@ export const Transcodes: React.FC = () => {
     }
   };
 
+  const handleRetry = async (job: TranscodeJob) => {
+    try {
+      // Delete the failed job first, then queue a new one
+      await api.cancelTranscode(job.id);
+      await api.queueTranscode(job.ratingKey, job.resolutionId);
+      loadJobs();
+    } catch (error) {
+      console.error('Failed to retry transcode:', error);
+    }
+  };
+
   const handleDownload = (job: TranscodeJob) => {
     // Use direct browser download with token in query string
     // This avoids buffering the entire file in memory
@@ -200,6 +211,15 @@ export const Transcodes: React.FC = () => {
               className="btn-secondary px-4 py-2 text-sm text-red-400 hover:text-red-300"
             >
               Cancel
+            </button>
+          )}
+          {job.status === 'error' && isOwnJob && (
+            <button
+              onClick={() => handleRetry(job)}
+              className="btn-primary px-4 py-2 text-sm flex items-center gap-2"
+            >
+              <span>🔄</span>
+              Retry
             </button>
           )}
           {(job.status === 'error' || job.status === 'completed') && isOwnJob && (

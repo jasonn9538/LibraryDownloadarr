@@ -258,22 +258,22 @@ export const ResolutionSelector: React.FC<ResolutionSelectorProps> = ({
                     </>
                   )}
                 </div>
-                {!resolution.isOriginal && (
-                  <div className="text-xs mt-1">
-                    {(() => {
-                      const transcodeStatus = transcodeStatuses.get(resolution.id);
-                      if (transcodeStatus?.status === 'completed') {
-                        return <span className="text-green-400">✅ Ready to download</span>;
-                      } else if (transcodeStatus?.status === 'transcoding') {
-                        return <span className="text-blue-400">⚙️ {transcodeStatus.progress === 0 ? 'Preparing to transcode...' : `Transcoding... ${transcodeStatus.progress}%`}</span>;
-                      } else if (transcodeStatus?.status === 'pending') {
-                        return <span className="text-yellow-400">⏳ Queued for transcoding</span>;
-                      } else {
-                        return <span className="text-gray-400">⚙️ Requires transcoding</span>;
-                      }
-                    })()}
-                  </div>
-                )}
+                <div className="text-xs mt-1">
+                  {resolution.isOriginal ? (
+                    <span className="text-green-400">✅ Ready to download</span>
+                  ) : (() => {
+                    const transcodeStatus = transcodeStatuses.get(resolution.id);
+                    if (transcodeStatus?.status === 'completed') {
+                      return <span className="text-green-400">✅ Ready to download</span>;
+                    } else if (transcodeStatus?.status === 'transcoding') {
+                      return <span className="text-blue-400">⚙️ {transcodeStatus.progress === 0 ? 'Preparing to transcode...' : `Transcoding... ${transcodeStatus.progress}%`}</span>;
+                    } else if (transcodeStatus?.status === 'pending') {
+                      return <span className="text-yellow-400">⏳ Queued for transcoding</span>;
+                    } else {
+                      return <span className="text-gray-400">⚙️ Requires transcoding</span>;
+                    }
+                  })()}
+                </div>
               </div>
               <div className="text-right">
                 {resolution.isOriginal && resolution.fileSize ? (
