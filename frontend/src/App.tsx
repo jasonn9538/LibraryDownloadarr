@@ -12,6 +12,8 @@ import { SearchResults } from './pages/SearchResults';
 import { DownloadHistory } from './pages/DownloadHistory';
 import { Logs } from './pages/Logs';
 import { Transcodes } from './pages/Transcodes';
+import { Users } from './pages/Users';
+import { Help } from './pages/Help';
 import { DownloadProvider } from './contexts/DownloadContext';
 import { DownloadManager } from './components/DownloadManager';
 
@@ -121,6 +123,14 @@ const App: React.FC = () => {
               }
             />
             <Route
+              path="/help"
+              element={
+                <ProtectedRoute>
+                  <Help />
+                </ProtectedRoute>
+              }
+            />
+            <Route
               path="/admin/download-history"
               element={
                 <ProtectedRoute>
@@ -133,6 +143,14 @@ const App: React.FC = () => {
               element={
                 <ProtectedRoute>
                   <Logs />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/admin/users"
+              element={
+                <ProtectedRoute>
+                  <Users />
                 </ProtectedRoute>
               }
             />

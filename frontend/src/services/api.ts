@@ -306,6 +306,31 @@ class ApiClient {
   getTranscodeJobDownloadUrl(jobId: string): string {
     return `/api/transcodes/${jobId}/download`;
   }
+
+  // User management endpoints (admin only)
+  async getUsers(): Promise<UserInfo[]> {
+    const response = await this.client.get<{ users: UserInfo[] }>('/users');
+    return response.data.users;
+  }
+
+  async updateUserAdmin(userId: string, isAdmin: boolean): Promise<void> {
+    await this.client.patch(`/users/${userId}/admin`, { isAdmin });
+  }
+
+  async deleteUser(userId: string): Promise<void> {
+    await this.client.delete(`/users/${userId}`);
+  }
+}
+
+// User info type for user management
+export interface UserInfo {
+  id: string;
+  username: string;
+  email: string;
+  isAdmin: boolean;
+  type: 'admin' | 'plex';
+  createdAt: number;
+  lastLogin?: number;
 }
 
 // Transcode job type for frontend

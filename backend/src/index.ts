@@ -12,6 +12,7 @@ import { createMediaRouter } from './routes/media';
 import { createSettingsRouter } from './routes/settings';
 import { createLogsRouter } from './routes/logs';
 import { createTranscodesRouter } from './routes/transcodes';
+import { createUsersRouter } from './routes/users';
 import { transcodeManager } from './services/transcodeManager';
 
 // Initialize database
@@ -57,6 +58,7 @@ app.use('/api/media', createMediaRouter(db));
 app.use('/api/settings', createSettingsRouter(db));
 app.use('/api/logs', createLogsRouter(db));
 app.use('/api/transcodes', createTranscodesRouter(db));
+app.use('/api/users', createUsersRouter(db));
 
 // Serve static files (frontend)
 const publicPath = path.join(__dirname, '..', 'public');

@@ -119,6 +119,14 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
           {user?.isAdmin && (
             <>
               <button
+                onClick={() => handleNavigate('/admin/users')}
+                className={`w-full text-left px-4 py-2 rounded-lg transition-colors ${
+                  isActive('/admin/users') ? 'bg-dark-200 text-primary-400' : 'hover:bg-dark-200'
+                }`}
+              >
+                👥 Users
+              </button>
+              <button
                 onClick={() => handleNavigate('/admin/download-history')}
                 className={`w-full text-left px-4 py-2 rounded-lg transition-colors ${
                   isActive('/admin/download-history') ? 'bg-dark-200 text-primary-400' : 'hover:bg-dark-200'
@@ -144,6 +152,15 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
               </button>
             </>
           )}
+
+          <button
+            onClick={() => handleNavigate('/help')}
+            className={`w-full text-left px-4 py-2 rounded-lg transition-colors ${
+              isActive('/help') ? 'bg-dark-200 text-primary-400' : 'hover:bg-dark-200'
+            }`}
+          >
+            ❓ Help & Guide
+          </button>
 
           {isLoading ? (
             <div className="px-4 py-2 text-sm text-gray-500">Loading libraries...</div>

@@ -676,6 +676,87 @@ export class DatabaseService {
   }
 
   // Utility methods
+  // User management
+  getAllUsers(): Array<{ id: string; username: string; email: string; isAdmin: boolean; type: 'admin' | 'plex'; createdAt: number; lastLogin?: number }> {
+    const adminUsers = this.db.prepare('SELECT id, username, email, is_admin, created_at, last_login FROM admin_users').all() as any[];
+    const plexUsers = this.db.prepare('SELECT id, username, email, is_admin, created_at, last_login FROM plex_users').all() as any[];
+
+    const users = [
+      ...adminUsers.map(row => ({
+        id: row.id,
+        username: row.username,
+        email: row.email,
+        isAdmin: row.is_admin === 1,
+        type: 'admin' as const,
+        createdAt: row.created_at,
+        lastLogin: row.last_login,
+      })),
+      ...plexUsers.map(row => ({
+        id: row.id,
+        username: row.username,
+        email: row.email || '',
+        isAdmin: row.is_admin === 1,
+        type: 'plex' as const,
+        createdAt: row.created_at,
+        lastLogin: row.last_login,
+      })),
+    ];
+
+    // Sort by last login (most recent first), then by created_at
+    return users.sort((a, b) => (b.lastLogin || b.createdAt) - (a.lastLogin || a.createdAt));
+  }
+
+  updateUserAdmin(userId: string, isAdmin: boolean): boolean {
+    // Try admin_users first
+    const adminResult = this.db.prepare('UPDATE admin_users SET is_admin = ? WHERE id = ?').run(isAdmin ? 1 : 0, userId);
+    if (adminResult.changes > 0) {
+      logger.info('Updated admin status for admin user', { userId, isAdmin });
+      return true;
+    }
+
+    // Try plex_users
+    const plexResult = this.db.prepare('UPDATE plex_users SET is_admin = ? WHERE id = ?').run(isAdmin ? 1 : 0, userId);
+    if (plexResult.changes > 0) {
+      logger.info('Updated admin status for plex user', { userId, isAdmin });
+      return true;
+    }
+
+    return false;
+  }
+
+  deleteUser(userId: string): boolean {
+    // Don't allow deleting the last admin
+    const adminCount = (this.db.prepare('SELECT COUNT(*) as count FROM admin_users WHERE is_admin = 1').get() as { count: number }).count;
+    const plexAdminCount = (this.db.prepare('SELECT COUNT(*) as count FROM plex_users WHERE is_admin = 1').get() as { count: number }).count;
+
+    // Check if this is an admin user
+    const adminUser = this.db.prepare('SELECT is_admin FROM admin_users WHERE id = ?').get(userId) as { is_admin: number } | undefined;
+    if (adminUser?.is_admin === 1 && adminCount <= 1 && plexAdminCount === 0) {
+      logger.warn('Cannot delete the last admin user');
+      return false;
+    }
+
+    // Try to delete from admin_users
+    const adminResult = this.db.prepare('DELETE FROM admin_users WHERE id = ?').run(userId);
+    if (adminResult.changes > 0) {
+      // Also delete their sessions
+      this.db.prepare('DELETE FROM sessions WHERE user_id = ?').run(userId);
+      logger.info('Deleted admin user', { userId });
+      return true;
+    }
+
+    // Try to delete from plex_users
+    const plexResult = this.db.prepare('DELETE FROM plex_users WHERE id = ?').run(userId);
+    if (plexResult.changes > 0) {
+      // Also delete their sessions
+      this.db.prepare('DELETE FROM sessions WHERE user_id = ?').run(userId);
+      logger.info('Deleted plex user', { userId });
+      return true;
+    }
+
+    return false;
+  }
+
   private mapAdminUser(row: any): AdminUser {
     return {
       id: row.id,
