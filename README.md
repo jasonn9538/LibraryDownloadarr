@@ -19,11 +19,15 @@ LibraryDownloadarr is a modern, self-hosted web application that provides a beau
 - 📱 **Progressive Web App** - Installable on mobile devices with a native-like experience
 - 🎨 **Modern Interface** - Beautiful, responsive design that works on all devices
 - 🔍 **Smart Search** - Search across all accessible libraries with relevance-based results
-- 📊 **Admin Dashboard** - Download history, logs, and settings management
+- 📊 **Admin Dashboard** - Download history, logs, user management, and settings
 - 🚀 **Easy Setup** - Initial setup wizard with guided configuration
 - 🎥 **Resolution Selection** - Choose download quality or transcode to lower resolutions
 - ⚙️ **Transcode Queue** - Queue transcodes and download when ready (files kept for 1 week)
+- 🖥️ **Hardware Encoding** - GPU-accelerated transcoding (Intel QSV, AMD/Intel VAAPI)
 - 📦 **Bulk Downloads** - Download entire seasons or albums as ZIP files
+- 👥 **User Management** - Admin can manage users and grant admin privileges
+- 📁 **Direct File Access** - Optional path mappings for faster transcoding
+- ❓ **Built-in Help** - Guide for users on how to use the app and play downloaded files
 
 ---
 
@@ -69,27 +73,40 @@ Before installing, ensure you have:
 This is the easiest method for most users. Create a `docker-compose.yml` file:
 
 ```yaml
-version: '3.8'
-
 services:
   librarydownloadarr:
-    image: ghcr.io/kikootwo/librarydownloadarr:latest
+    image: ghcr.io/jasonn9538/librarydownloadarr:latest
     container_name: librarydownloadarr
     restart: unless-stopped
     ports:
       - "5069:5069"
     environment:
+      # Server configuration
       - PORT=5069
       - LOG_LEVEL=info
       - DATABASE_PATH=/app/data/librarydownloadarr.db
       - TZ=America/New_York  # Change to your timezone
+
+      # Security settings (recommended for production)
+      # - CORS_ORIGIN=https://library.yourdomain.com  # Set to your domain
+      # - ADMIN_LOGIN_ENABLED=false  # Disable after promoting a Plex user to admin
+
       # Transcoding configuration
       - TRANSCODE_DIR=/app/transcode
       - MAX_CONCURRENT_TRANSCODES=2
+      - HARDWARE_ENCODING=auto  # auto, vaapi, qsv, or software
     volumes:
       - ./data:/app/data           # Database and application data
       - ./logs:/app/logs           # Application logs
-      - ./transcode:/app/transcode # Transcoded files (use fast storage for best performance)
+      - ./transcode:/app/transcode # Transcoded files (use fast storage)
+      # Optional: Mount media for direct file access (faster transcoding)
+      # - /path/to/your/media:/mnt/media:ro
+    # GPU access for hardware encoding (Intel/AMD)
+    devices:
+      - /dev/dri:/dev/dri
+    group_add:
+      - "44"    # video group
+      - "993"   # render group (may vary by system)
     networks:
       - librarydownloadarr
 
@@ -121,10 +138,14 @@ docker run -d \
   -e TZ=America/New_York \
   -e TRANSCODE_DIR=/app/transcode \
   -e MAX_CONCURRENT_TRANSCODES=2 \
+  -e HARDWARE_ENCODING=auto \
+  --device /dev/dri:/dev/dri \
+  --group-add 44 \
+  --group-add 993 \
   -v $(pwd)/data:/app/data \
   -v $(pwd)/logs:/app/logs \
   -v $(pwd)/transcode:/app/transcode \
-  ghcr.io/kikootwo/librarydownloadarr:latest
+  ghcr.io/jasonn9538/librarydownloadarr:latest
 ```
 
 ### Method 3: Build from Source
@@ -133,7 +154,7 @@ If you want to build the image yourself:
 
 ```bash
 # Clone the repository
-git clone https://github.com/kikootwo/LibraryDownloadarr.git
+git clone https://github.com/jasonn9538/LibraryDownloadarr.git
 cd LibraryDownloadarr
 
 # Build and start with Docker Compose
@@ -152,13 +173,16 @@ Customize your deployment with environment variables:
 | `TZ` | Timezone for logs and dates | `America/New_York` | `Europe/London`, `Asia/Tokyo` |
 | `TRANSCODE_DIR` | Directory for transcoded files | `/app/transcode` | `/mnt/fast-storage/transcode` |
 | `MAX_CONCURRENT_TRANSCODES` | Max simultaneous transcodes | `2` | `1`, `4` |
+| `HARDWARE_ENCODING` | GPU encoding mode | `auto` | `vaapi`, `qsv`, `software` |
+| `CORS_ORIGIN` | Allowed CORS origin | (same-origin) | `https://library.example.com` |
+| `ADMIN_LOGIN_ENABLED` | Enable admin password login | `true` | `false` (Plex OAuth only) |
 
 ### Initial Setup
 
 1. **Navigate to your LibraryDownloadarr instance** (e.g., `http://localhost:5069`)
 
 2. **Create Admin Account** (First-time only):
-   - Choose a username and secure password
+   - Choose a username and secure password (12+ characters with uppercase, lowercase, and numbers)
    - This account has full administrative access
 
 3. **Configure Plex Connection** (Settings page):
@@ -167,9 +191,20 @@ Customize your deployment with environment variables:
    - Click **Test Connection** to verify
    - Server details (Machine ID and Name) are fetched automatically
 
-4. **Start Using**:
+4. **Optional: Configure Path Mappings** (Settings page):
+   - If you mount your media directories into the container, configure path mappings
+   - This allows direct file access during transcoding (much faster than downloading via Plex API)
+   - Example: Plex path `/media/Movies` → Container path `/mnt/media/Movies`
+
+5. **Start Using**:
    - Admin can log in with username/password
    - Users sign in with their Plex accounts via OAuth
+
+6. **Recommended: Secure for Production**:
+   - Log in with your Plex account (via OAuth)
+   - Go to **Users** page and promote your Plex user to admin
+   - Set `ADMIN_LOGIN_ENABLED=false` in docker-compose to disable password login
+   - This way, only Plex OAuth is available (more secure, supports 2FA)
 
 ### Reverse Proxy Setup (Production)
 
@@ -200,7 +235,7 @@ server {
 ```yaml
 services:
   librarydownloadarr:
-    image: ghcr.io/kikootwo/librarydownloadarr:latest
+    image: ghcr.io/jasonn9538/librarydownloadarr:latest
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.librarydownloadarr.rule=Host(`downloads.yourdomain.com`)"
@@ -268,10 +303,19 @@ LibraryDownloadarr includes a powerful transcode queue for downloading media at 
 - 📱 **H.264 output** - Maximum compatibility with all devices (Main profile, Level 4.0)
 
 **Transcode Settings:**
-- Video: H.264 (libx264), CRF 23, fast preset
+- Video: H.264 (hardware accelerated when available, falls back to libx264)
 - Audio: AAC, 128kbps stereo
 - Container: MP4 with faststart for web streaming
 - Max 2 concurrent transcodes by default (configurable)
+
+**Hardware Encoding:**
+- **Auto-detection**: Set `HARDWARE_ENCODING=auto` to automatically detect available GPU
+- **Intel VAAPI**: Works with Intel integrated graphics (recommended for most users)
+- **Intel QSV**: Quick Sync Video for newer Intel CPUs
+- **AMD VAAPI**: Works with AMD GPUs
+- **Software fallback**: If no GPU is available, uses CPU encoding (slower)
+
+To enable hardware encoding, ensure `/dev/dri` is passed to the container and the correct group IDs are added (see docker-compose example).
 
 ### Data Storage
 
@@ -317,7 +361,7 @@ Found a bug or have a feature request?
 
 1. **Fork the repository**
    ```bash
-   git fork https://github.com/kikootwo/LibraryDownloadarr.git
+   git fork https://github.com/jasonn9538/LibraryDownloadarr.git
    ```
 
 2. **Create a feature branch**
@@ -360,7 +404,7 @@ For local development:
 
 ```bash
 # Clone repository
-git clone https://github.com/kikootwo/LibraryDownloadarr.git
+git clone https://github.com/jasonn9538/LibraryDownloadarr.git
 cd LibraryDownloadarr
 
 # Backend (runs on port 5069)
@@ -457,7 +501,8 @@ npm run dev
 
 **Production Deployment Checklist:**
 - ✅ Use HTTPS via reverse proxy (nginx, Traefik, Caddy)
-- ✅ Set strong admin password during initial setup
+- ✅ Set strong admin password during initial setup (12+ chars with complexity)
+- ✅ Promote a Plex user to admin and disable password login (`ADMIN_LOGIN_ENABLED=false`)
 - ✅ Configure proper Plex server URL (not public if on local network)
 - ✅ Keep Plex token secure (never commit to version control)
 - ✅ Regularly update to latest Docker image
@@ -466,18 +511,23 @@ npm run dev
 - ✅ Implement rate limiting at reverse proxy level
 
 **Built-in Security Features:**
-- Session-based authentication with 24-hour expiration
+- Session-based authentication with secure token generation (256-bit entropy)
 - Machine ID validation prevents unauthorized server access
-- Rate limiting on API endpoints
+- Brute force protection with IP-based lockout (persists across restarts)
+- Strong password requirements (12+ characters with complexity)
+- Session invalidation on password change
+- Content Security Policy (CSP) headers enabled
+- Path traversal protection on file operations
 - User permissions inherited from Plex
-- All operations logged for audit trails
-- CORS protection enabled
+- Audit logging for security-sensitive actions (login, password changes, admin changes)
+- CORS protection (configurable, defaults to same-origin only)
+- Option to disable admin password login for Plex OAuth-only authentication
 
 ---
 
 ## Support & Community
 
-- 💬 **Issues**: [GitHub Issues](https://github.com/kikootwo/LibraryDownloadarr/issues)
+- 💬 **Issues**: [GitHub Issues](https://github.com/jasonn9538/LibraryDownloadarr/issues)
 - 🐛 **Bug Reports**: Use the issue template on GitHub
 - 💡 **Feature Requests**: Open an issue with the "enhancement" label
 
