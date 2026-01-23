@@ -246,16 +246,23 @@ export class DatabaseService {
 
   // Plex user operations
   createOrUpdatePlexUser(plexUser: Omit<User, 'id' | 'createdAt' | 'isAdmin'>): User {
-    const existing = this.getPlexUserByPlexId(plexUser.plexId!);
+    // First check by plex_id
+    let existing = this.getPlexUserByPlexId(plexUser.plexId!);
+
+    // If not found by plex_id, check by username (handles managed users with different plex_ids)
+    if (!existing) {
+      existing = this.getPlexUserByUsername(plexUser.username);
+    }
 
     if (existing) {
       // SECURITY: No longer store serverUrl - always use admin's configured server
+      // Update by id to handle both plex_id match and username match cases
       const stmt = this.db.prepare(`
         UPDATE plex_users
-        SET username = ?, email = ?, plex_token = ?, server_url = NULL, last_login = ?
-        WHERE plex_id = ?
+        SET username = ?, email = ?, plex_token = ?, plex_id = ?, server_url = NULL, last_login = ?
+        WHERE id = ?
       `);
-      stmt.run(plexUser.username, plexUser.email, plexUser.plexToken, Date.now(), plexUser.plexId);
+      stmt.run(plexUser.username, plexUser.email, plexUser.plexToken, plexUser.plexId, Date.now(), existing.id);
       return { ...existing, ...plexUser, serverUrl: undefined, lastLogin: Date.now() };
     }
 
@@ -274,6 +281,12 @@ export class DatabaseService {
   getPlexUserByPlexId(plexId: string): User | undefined {
     const stmt = this.db.prepare('SELECT * FROM plex_users WHERE plex_id = ?');
     const row = stmt.get(plexId) as any;
+    return row ? this.mapPlexUser(row) : undefined;
+  }
+
+  getPlexUserByUsername(username: string): User | undefined {
+    const stmt = this.db.prepare('SELECT * FROM plex_users WHERE username = ?');
+    const row = stmt.get(username) as any;
     return row ? this.mapPlexUser(row) : undefined;
   }
 
