@@ -1,6 +1,7 @@
 import Database from 'better-sqlite3';
 import path from 'path';
 import fs from 'fs';
+import crypto from 'crypto';
 import { logger } from '../utils/logger';
 
 export interface User {
@@ -198,6 +199,36 @@ export class DatabaseService {
       CREATE INDEX IF NOT EXISTS idx_transcode_jobs_rating_key_resolution ON transcode_jobs(rating_key, resolution_id);
     `);
 
+    // Failed login attempts table (for persistent brute force protection)
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS failed_login_attempts (
+        ip TEXT PRIMARY KEY,
+        count INTEGER NOT NULL DEFAULT 1,
+        first_attempt INTEGER NOT NULL,
+        locked_until INTEGER
+      )
+    `);
+
+    // Audit log table (for security-sensitive actions)
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS audit_log (
+        id TEXT PRIMARY KEY,
+        timestamp INTEGER NOT NULL,
+        action TEXT NOT NULL,
+        user_id TEXT,
+        username TEXT,
+        ip TEXT,
+        details TEXT
+      )
+    `);
+
+    // Create index for audit log
+    this.db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_audit_log_timestamp ON audit_log(timestamp);
+      CREATE INDEX IF NOT EXISTS idx_audit_log_user_id ON audit_log(user_id);
+      CREATE INDEX IF NOT EXISTS idx_audit_log_action ON audit_log(action);
+    `);
+
     logger.info('Database tables initialized');
   }
 
@@ -329,6 +360,23 @@ export class DatabaseService {
     if (result.changes > 0) {
       logger.info(`Cleaned up ${result.changes} expired sessions`);
     }
+  }
+
+  // Delete all sessions for a user (used on password change for security)
+  deleteUserSessions(userId: string, exceptToken?: string): number {
+    let stmt;
+    let result;
+    if (exceptToken) {
+      stmt = this.db.prepare('DELETE FROM sessions WHERE user_id = ? AND token != ?');
+      result = stmt.run(userId, exceptToken);
+    } else {
+      stmt = this.db.prepare('DELETE FROM sessions WHERE user_id = ?');
+      result = stmt.run(userId);
+    }
+    if (result.changes > 0) {
+      logger.info(`Invalidated ${result.changes} sessions for user`, { userId });
+    }
+    return result.changes;
   }
 
   // Settings operations
@@ -807,11 +855,140 @@ export class DatabaseService {
   }
 
   private generateId(): string {
-    return `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    // Use cryptographically secure random bytes for ID generation
+    return `${Date.now()}-${crypto.randomBytes(12).toString('hex')}`;
   }
 
   private generateToken(): string {
-    return `${Math.random().toString(36).substr(2)}${Math.random().toString(36).substr(2)}${Date.now().toString(36)}`;
+    // Use cryptographically secure random bytes for session tokens (32 bytes = 256 bits)
+    return crypto.randomBytes(32).toString('hex');
+  }
+
+  // Failed login attempts (brute force protection)
+  getFailedAttempts(ip: string): { count: number; firstAttempt: number; lockedUntil?: number } | undefined {
+    const stmt = this.db.prepare('SELECT count, first_attempt, locked_until FROM failed_login_attempts WHERE ip = ?');
+    const row = stmt.get(ip) as { count: number; first_attempt: number; locked_until?: number } | undefined;
+    if (!row) return undefined;
+    return {
+      count: row.count,
+      firstAttempt: row.first_attempt,
+      lockedUntil: row.locked_until || undefined,
+    };
+  }
+
+  recordFailedAttempt(ip: string, maxAttempts: number, lockoutDurationMs: number): { blocked: boolean; attemptsRemaining: number } {
+    const now = Date.now();
+    const existing = this.getFailedAttempts(ip);
+
+    if (!existing) {
+      // First attempt
+      const stmt = this.db.prepare(`
+        INSERT INTO failed_login_attempts (ip, count, first_attempt)
+        VALUES (?, 1, ?)
+      `);
+      stmt.run(ip, now);
+      return { blocked: false, attemptsRemaining: maxAttempts - 1 };
+    }
+
+    const newCount = existing.count + 1;
+
+    if (newCount >= maxAttempts) {
+      // Lock the IP
+      const lockedUntil = now + lockoutDurationMs;
+      const stmt = this.db.prepare(`
+        UPDATE failed_login_attempts SET count = ?, locked_until = ? WHERE ip = ?
+      `);
+      stmt.run(newCount, lockedUntil, ip);
+      logger.warn('IP blocked due to too many failed login attempts', { ip, attempts: newCount });
+      return { blocked: true, attemptsRemaining: 0 };
+    }
+
+    // Update count
+    const stmt = this.db.prepare('UPDATE failed_login_attempts SET count = ? WHERE ip = ?');
+    stmt.run(newCount, ip);
+    return { blocked: false, attemptsRemaining: maxAttempts - newCount };
+  }
+
+  clearFailedAttempts(ip: string): void {
+    const stmt = this.db.prepare('DELETE FROM failed_login_attempts WHERE ip = ?');
+    stmt.run(ip);
+  }
+
+  isIpBlocked(ip: string): { blocked: boolean; remainingMs?: number } {
+    const attempt = this.getFailedAttempts(ip);
+    if (!attempt) return { blocked: false };
+
+    if (attempt.lockedUntil) {
+      const now = Date.now();
+      if (now < attempt.lockedUntil) {
+        return { blocked: true, remainingMs: attempt.lockedUntil - now };
+      }
+      // Lockout expired, clear it
+      this.clearFailedAttempts(ip);
+      return { blocked: false };
+    }
+
+    return { blocked: false };
+  }
+
+  cleanupOldFailedAttempts(): void {
+    const now = Date.now();
+    const thirtyMinutesAgo = now - 30 * 60 * 1000;
+
+    // Remove entries that are not locked and haven't had activity in 30 minutes
+    const stmt = this.db.prepare(`
+      DELETE FROM failed_login_attempts
+      WHERE (locked_until IS NULL AND first_attempt < ?)
+         OR (locked_until IS NOT NULL AND locked_until < ?)
+    `);
+    const result = stmt.run(thirtyMinutesAgo, now);
+    if (result.changes > 0) {
+      logger.debug(`Cleaned up ${result.changes} old failed login attempts`);
+    }
+  }
+
+  // Audit logging
+  logAuditEvent(action: string, userId?: string, username?: string, ip?: string, details?: Record<string, any>): void {
+    const id = this.generateId();
+    const stmt = this.db.prepare(`
+      INSERT INTO audit_log (id, timestamp, action, user_id, username, ip, details)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `);
+    stmt.run(id, Date.now(), action, userId, username, ip, details ? JSON.stringify(details) : null);
+  }
+
+  getAuditLog(limit: number = 100, action?: string): Array<{
+    id: string;
+    timestamp: number;
+    action: string;
+    userId?: string;
+    username?: string;
+    ip?: string;
+    details?: Record<string, any>;
+  }> {
+    let query = 'SELECT * FROM audit_log';
+    const params: any[] = [];
+
+    if (action) {
+      query += ' WHERE action = ?';
+      params.push(action);
+    }
+
+    query += ' ORDER BY timestamp DESC LIMIT ?';
+    params.push(limit);
+
+    const stmt = this.db.prepare(query);
+    const rows = stmt.all(...params) as any[];
+
+    return rows.map(row => ({
+      id: row.id,
+      timestamp: row.timestamp,
+      action: row.action,
+      userId: row.user_id,
+      username: row.username,
+      ip: row.ip,
+      details: row.details ? JSON.parse(row.details) : undefined,
+    }));
   }
 
   close(): void {

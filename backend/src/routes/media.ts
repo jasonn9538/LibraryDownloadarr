@@ -903,10 +903,31 @@ export const createMediaRouter = (db: DatabaseService) => {
   // Support both Authorization header and query parameter token for image requests
   router.get('/thumb/:ratingKey', async (req: AuthRequest, res) => {
     try {
-      const { path, token } = req.query;
+      const { path: thumbPath, token } = req.query;
 
-      if (!path || typeof path !== 'string') {
+      if (!thumbPath || typeof thumbPath !== 'string') {
         return res.status(400).json({ error: 'Thumbnail path is required' });
+      }
+
+      // SECURITY: Validate thumbnail path format to prevent SSRF
+      // Valid Plex paths look like /library/metadata/12345/thumb/1234567890
+      // or /photo/:/transcode?... or /library/sections/1/...
+      const validPathPatterns = [
+        /^\/library\/metadata\/\d+\/(thumb|art|banner|poster)/,
+        /^\/library\/sections\/\d+\//,
+        /^\/photo\/:\/transcode/,
+      ];
+
+      const isValidPath = validPathPatterns.some(pattern => pattern.test(thumbPath));
+      if (!isValidPath) {
+        logger.warn('Invalid thumbnail path requested', { path: thumbPath, ip: req.ip });
+        return res.status(400).json({ error: 'Invalid thumbnail path' });
+      }
+
+      // SECURITY: Prevent path traversal
+      if (thumbPath.includes('..') || thumbPath.includes('\0')) {
+        logger.warn('Path traversal attempt in thumbnail proxy', { path: thumbPath, ip: req.ip });
+        return res.status(400).json({ error: 'Invalid thumbnail path' });
       }
 
       // Check authentication from query parameter first (for <img> tags), then from header
@@ -952,7 +973,7 @@ export const createMediaRouter = (db: DatabaseService) => {
         return res.status(401).json({ error: 'Plex token required - configure in settings' });
       }
 
-      const thumbUrl = plexService.getThumbnailUrl(path, plexToken);
+      const thumbUrl = plexService.getThumbnailUrl(thumbPath, plexToken);
       const response = await axios({
         method: 'GET',
         url: thumbUrl,

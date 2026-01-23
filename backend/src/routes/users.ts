@@ -1,7 +1,16 @@
-import { Router } from 'express';
+import { Router, Request } from 'express';
 import { DatabaseService } from '../models/database';
 import { logger } from '../utils/logger';
 import { AuthRequest, createAuthMiddleware, createAdminMiddleware } from '../middleware/auth';
+
+function getClientIp(req: Request): string {
+  const forwarded = req.headers['x-forwarded-for'];
+  if (forwarded) {
+    const ips = (typeof forwarded === 'string' ? forwarded : forwarded[0]).split(',');
+    return ips[0].trim();
+  }
+  return req.ip || req.socket.remoteAddress || 'unknown';
+}
 
 export const createUsersRouter = (db: DatabaseService) => {
   const router = Router();
@@ -40,6 +49,15 @@ export const createUsersRouter = (db: DatabaseService) => {
         return res.status(404).json({ error: 'User not found' });
       }
 
+      // Log to audit trail
+      db.logAuditEvent(
+        isAdmin ? 'ADMIN_GRANTED' : 'ADMIN_REVOKED',
+        req.user?.id,
+        req.user?.username,
+        getClientIp(req),
+        { targetUserId: userId }
+      );
+
       logger.info('User admin status updated', {
         userId,
         isAdmin,
@@ -67,6 +85,15 @@ export const createUsersRouter = (db: DatabaseService) => {
       if (!success) {
         return res.status(400).json({ error: 'Cannot delete user. They may be the last admin or user not found.' });
       }
+
+      // Log to audit trail
+      db.logAuditEvent(
+        'USER_DELETED',
+        req.user?.id,
+        req.user?.username,
+        getClientIp(req),
+        { deletedUserId: userId }
+      );
 
       logger.info('User deleted', {
         userId,

@@ -31,12 +31,33 @@ const app = express();
 
 // Security middleware
 app.use(helmet({
-  contentSecurityPolicy: false, // We'll configure this properly in production
-  crossOriginEmbedderPolicy: false,
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'"],
+      styleSrc: ["'self'", "'unsafe-inline'"], // Tailwind needs inline styles
+      imgSrc: ["'self'", "data:", "blob:"], // Images from our proxy and data URIs
+      connectSrc: ["'self'", "https://plex.tv", "https://app.plex.tv"], // API calls
+      fontSrc: ["'self'"],
+      objectSrc: ["'none'"],
+      mediaSrc: ["'self'", "blob:"],
+      frameSrc: ["'none'"],
+      formAction: ["'self'"],
+      upgradeInsecureRequests: [],
+    },
+  },
+  crossOriginEmbedderPolicy: false, // Needed for Plex image proxying
+  crossOriginResourcePolicy: { policy: "same-site" },
+  referrerPolicy: { policy: "strict-origin-when-cross-origin" },
 }));
 
-// CORS
-app.use(cors(config.cors));
+// CORS - only enable if origin is configured
+if (config.cors.origin) {
+  app.use(cors(config.cors));
+} else {
+  // In production without explicit CORS_ORIGIN, only same-origin requests allowed
+  logger.info('CORS disabled - only same-origin requests allowed');
+}
 
 // Rate limiting
 const limiter = rateLimit(config.rateLimit);

@@ -14,6 +14,39 @@ const CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 1 week
 const MAX_CONCURRENT_TRANSCODES = parseInt(process.env.MAX_CONCURRENT_TRANSCODES || '2', 10);
 const HARDWARE_ENCODING = process.env.HARDWARE_ENCODING || 'auto'; // auto, vaapi, qsv, software
 
+// SECURITY: Validate that a path is safe (no path traversal)
+function isPathSafe(filePath: string): boolean {
+  // Normalize the path to resolve any .. or . components
+  const normalizedPath = path.normalize(filePath);
+
+  // Check for path traversal attempts
+  if (normalizedPath.includes('..')) {
+    return false;
+  }
+
+  // Check for null bytes (used in path traversal attacks)
+  if (filePath.includes('\0')) {
+    return false;
+  }
+
+  return true;
+}
+
+// SECURITY: Validate that a local path is within allowed path mappings
+function isPathWithinMappings(localPath: string, pathMappings: Array<{ plexPath: string; localPath: string }>): boolean {
+  const normalizedLocalPath = path.normalize(localPath);
+
+  for (const mapping of pathMappings) {
+    const normalizedMappingPath = path.normalize(mapping.localPath);
+    // Check if the local path starts with the mapping's local path
+    if (normalizedLocalPath.startsWith(normalizedMappingPath)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 // HTTPS agent that bypasses SSL certificate validation for local Plex servers
 const httpsAgent = new https.Agent({
   rejectUnauthorized: false
@@ -465,6 +498,26 @@ class TranscodeManager {
         for (const mapping of pathMappings) {
           if (plexFilePath.startsWith(mapping.plexPath)) {
             const localFilePath = plexFilePath.replace(mapping.plexPath, mapping.localPath);
+
+            // SECURITY: Validate the path is safe (no path traversal)
+            if (!isPathSafe(localFilePath)) {
+              logger.warn('Path traversal attempt detected in local file path', {
+                jobId: job.id,
+                plexPath: plexFilePath,
+                localPath: localFilePath,
+              });
+              continue;
+            }
+
+            // SECURITY: Validate path is within allowed mappings
+            if (!isPathWithinMappings(localFilePath, pathMappings)) {
+              logger.warn('Local file path is not within allowed path mappings', {
+                jobId: job.id,
+                localPath: localFilePath,
+              });
+              continue;
+            }
+
             if (fs.existsSync(localFilePath)) {
               inputPath = localFilePath;
               useLocalFile = true;

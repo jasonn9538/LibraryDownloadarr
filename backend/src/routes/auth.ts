@@ -5,32 +5,13 @@ import { plexService } from '../services/plexService';
 import { logger } from '../utils/logger';
 import { AuthRequest, createAuthMiddleware } from '../middleware/auth';
 
-// Brute force protection: track failed login attempts per IP
+// Brute force protection constants
 const MAX_FAILED_ATTEMPTS = 5;
 const LOCKOUT_DURATION_MS = 15 * 60 * 1000; // 15 minutes
 
-interface FailedAttempt {
-  count: number;
-  firstAttempt: number;
-  lockedUntil?: number;
-}
-
-const failedAttempts = new Map<string, FailedAttempt>();
-
-// Clean up old entries periodically (every hour)
-setInterval(() => {
-  const now = Date.now();
-  for (const [ip, attempt] of failedAttempts.entries()) {
-    // Remove entries that are no longer locked and haven't had activity in 30 minutes
-    if (!attempt.lockedUntil && now - attempt.firstAttempt > 30 * 60 * 1000) {
-      failedAttempts.delete(ip);
-    }
-    // Remove entries whose lockout has expired
-    if (attempt.lockedUntil && now > attempt.lockedUntil) {
-      failedAttempts.delete(ip);
-    }
-  }
-}, 60 * 60 * 1000);
+// Admin login can be disabled via environment variable for better security
+// When disabled, only Plex OAuth is available
+const ADMIN_LOGIN_ENABLED = process.env.ADMIN_LOGIN_ENABLED !== 'false';
 
 function getClientIp(req: Request): string {
   // Support for reverse proxies
@@ -42,51 +23,14 @@ function getClientIp(req: Request): string {
   return req.ip || req.socket.remoteAddress || 'unknown';
 }
 
-function isIpBlocked(ip: string): { blocked: boolean; remainingMs?: number } {
-  const attempt = failedAttempts.get(ip);
-  if (!attempt) return { blocked: false };
-
-  if (attempt.lockedUntil) {
-    const now = Date.now();
-    if (now < attempt.lockedUntil) {
-      return { blocked: true, remainingMs: attempt.lockedUntil - now };
-    }
-    // Lockout expired, reset
-    failedAttempts.delete(ip);
-    return { blocked: false };
-  }
-
-  return { blocked: false };
-}
-
-function recordFailedAttempt(ip: string): { blocked: boolean; attemptsRemaining: number } {
-  const now = Date.now();
-  let attempt = failedAttempts.get(ip);
-
-  if (!attempt) {
-    attempt = { count: 1, firstAttempt: now };
-    failedAttempts.set(ip, attempt);
-    return { blocked: false, attemptsRemaining: MAX_FAILED_ATTEMPTS - 1 };
-  }
-
-  attempt.count++;
-
-  if (attempt.count >= MAX_FAILED_ATTEMPTS) {
-    attempt.lockedUntil = now + LOCKOUT_DURATION_MS;
-    logger.warn('IP blocked due to too many failed login attempts', { ip, attempts: attempt.count });
-    return { blocked: true, attemptsRemaining: 0 };
-  }
-
-  return { blocked: false, attemptsRemaining: MAX_FAILED_ATTEMPTS - attempt.count };
-}
-
-function clearFailedAttempts(ip: string): void {
-  failedAttempts.delete(ip);
-}
-
 export const createAuthRouter = (db: DatabaseService) => {
   const router = Router();
   const authMiddleware = createAuthMiddleware(db);
+
+  // Clean up old failed login attempts periodically (every hour)
+  setInterval(() => {
+    db.cleanupOldFailedAttempts();
+  }, 60 * 60 * 1000);
 
   // Check if initial setup is required
   router.get('/setup/required', (_req, res) => {
@@ -94,9 +38,19 @@ export const createAuthRouter = (db: DatabaseService) => {
     return res.json({ setupRequired: !hasAdmin });
   });
 
+  // Check if admin login is enabled (for frontend to show/hide login form)
+  router.get('/admin-login-enabled', (_req, res) => {
+    return res.json({ enabled: ADMIN_LOGIN_ENABLED });
+  });
+
   // Initial admin setup
   router.post('/setup', async (req, res) => {
     try {
+      // SECURITY: Setup can be disabled if admin login is disabled and there's already an OAuth admin
+      if (!ADMIN_LOGIN_ENABLED && db.hasAdminUser()) {
+        return res.status(403).json({ error: 'Admin login is disabled' });
+      }
+
       if (db.hasAdminUser()) {
         return res.status(400).json({ error: 'Setup already completed' });
       }
@@ -107,8 +61,23 @@ export const createAuthRouter = (db: DatabaseService) => {
         return res.status(400).json({ error: 'Username and password are required' });
       }
 
-      // Hash password
-      const passwordHash = await bcrypt.hash(password, 10);
+      // SECURITY: Enforce strong password requirements
+      if (password.length < 12) {
+        return res.status(400).json({ error: 'Password must be at least 12 characters long' });
+      }
+
+      // Check for password complexity
+      const hasUppercase = /[A-Z]/.test(password);
+      const hasLowercase = /[a-z]/.test(password);
+      const hasNumber = /[0-9]/.test(password);
+      if (!hasUppercase || !hasLowercase || !hasNumber) {
+        return res.status(400).json({
+          error: 'Password must contain at least one uppercase letter, one lowercase letter, and one number'
+        });
+      }
+
+      // Hash password (using bcrypt cost factor 12 for better security)
+      const passwordHash = await bcrypt.hash(password, 12);
 
       // Create admin user (email is optional, use username@localhost as default)
       const adminUser = db.createAdminUser({
@@ -142,10 +111,16 @@ export const createAuthRouter = (db: DatabaseService) => {
   // Admin login
   router.post('/login', async (req, res) => {
     try {
+      // SECURITY: Admin login can be disabled via environment variable
+      if (!ADMIN_LOGIN_ENABLED) {
+        logger.warn('Admin login attempt when disabled', { ip: getClientIp(req) });
+        return res.status(403).json({ error: 'Admin login is disabled. Please use Plex authentication.' });
+      }
+
       const ip = getClientIp(req);
 
-      // Check if IP is blocked
-      const blockStatus = isIpBlocked(ip);
+      // Check if IP is blocked (using database for persistence)
+      const blockStatus = db.isIpBlocked(ip);
       if (blockStatus.blocked) {
         const minutesRemaining = Math.ceil((blockStatus.remainingMs || 0) / 60000);
         logger.warn('Blocked login attempt from locked IP', { ip });
@@ -162,8 +137,10 @@ export const createAuthRouter = (db: DatabaseService) => {
 
       const user = db.getAdminUserByUsername(username);
       if (!user) {
-        const result = recordFailedAttempt(ip);
+        const result = db.recordFailedAttempt(ip, MAX_FAILED_ATTEMPTS, LOCKOUT_DURATION_MS);
         logger.warn('Failed login attempt - user not found', { ip, username });
+        // Log to audit trail
+        db.logAuditEvent('LOGIN_FAILED', undefined, username, ip, { reason: 'user_not_found' });
         if (result.blocked) {
           return res.status(429).json({
             error: 'Too many failed login attempts. Try again in 15 minutes.'
@@ -174,8 +151,10 @@ export const createAuthRouter = (db: DatabaseService) => {
 
       const isValid = await bcrypt.compare(password, user.passwordHash);
       if (!isValid) {
-        const result = recordFailedAttempt(ip);
+        const result = db.recordFailedAttempt(ip, MAX_FAILED_ATTEMPTS, LOCKOUT_DURATION_MS);
         logger.warn('Failed login attempt - wrong password', { ip, username });
+        // Log to audit trail
+        db.logAuditEvent('LOGIN_FAILED', user.id, username, ip, { reason: 'invalid_password' });
         if (result.blocked) {
           return res.status(429).json({
             error: 'Too many failed login attempts. Try again in 15 minutes.'
@@ -185,10 +164,13 @@ export const createAuthRouter = (db: DatabaseService) => {
       }
 
       // Successful login - clear failed attempts
-      clearFailedAttempts(ip);
+      db.clearFailedAttempts(ip);
 
       db.updateAdminLastLogin(user.id);
       const session = db.createSession(user.id);
+
+      // Log successful login to audit trail
+      db.logAuditEvent('LOGIN_SUCCESS', user.id, user.username, ip, { method: 'password' });
 
       logger.info(`User logged in: ${username}`, { ip });
 
@@ -299,6 +281,9 @@ export const createAuthRouter = (db: DatabaseService) => {
       // Create session
       const session = db.createSession(plexUser.id);
 
+      // Log successful Plex login to audit trail
+      db.logAuditEvent('LOGIN_SUCCESS', plexUser.id, plexUser.username, getClientIp(req), { method: 'plex_oauth' });
+
       logger.info(`Plex user authenticated: ${plexUser.username}`);
 
       return res.json({
@@ -347,8 +332,19 @@ export const createAuthRouter = (db: DatabaseService) => {
         return res.status(400).json({ error: 'Current password and new password are required' });
       }
 
-      if (newPassword.length < 6) {
-        return res.status(400).json({ error: 'New password must be at least 6 characters long' });
+      // SECURITY: Enforce strong password requirements
+      if (newPassword.length < 12) {
+        return res.status(400).json({ error: 'New password must be at least 12 characters long' });
+      }
+
+      // Check for password complexity (at least one uppercase, one lowercase, one number)
+      const hasUppercase = /[A-Z]/.test(newPassword);
+      const hasLowercase = /[a-z]/.test(newPassword);
+      const hasNumber = /[0-9]/.test(newPassword);
+      if (!hasUppercase || !hasLowercase || !hasNumber) {
+        return res.status(400).json({
+          error: 'Password must contain at least one uppercase letter, one lowercase letter, and one number'
+        });
       }
 
       // Only admin users (those with password_hash) can change passwords
@@ -364,15 +360,26 @@ export const createAuthRouter = (db: DatabaseService) => {
         return res.status(400).json({ error: 'Current password is incorrect' });
       }
 
-      // Hash new password
-      const newPasswordHash = await bcrypt.hash(newPassword, 10);
+      // Hash new password (using bcrypt cost factor 12 for better security)
+      const newPasswordHash = await bcrypt.hash(newPassword, 12);
 
       // Update password in database
       db.updateAdminPassword(user.id, newPasswordHash);
 
-      logger.info(`Password changed for admin user: ${user.username}`);
+      // SECURITY: Invalidate all other sessions for this user
+      // Keep the current session so user doesn't get logged out
+      const currentToken = req.authSession?.token;
+      db.deleteUserSessions(user.id, currentToken);
 
-      return res.json({ message: 'Password changed successfully' });
+      // Log password change to audit trail
+      db.logAuditEvent('PASSWORD_CHANGED', user.id, user.username, getClientIp(req));
+
+      logger.info(`Password changed for admin user: ${user.username}`, {
+        userId: user.id,
+        ip: getClientIp(req)
+      });
+
+      return res.json({ message: 'Password changed successfully. All other sessions have been logged out.' });
     } catch (error) {
       logger.error('Password change error', { error });
       return res.status(500).json({ error: 'Password change failed' });

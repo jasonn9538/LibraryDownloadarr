@@ -11,6 +11,15 @@ services:
       - LOG_LEVEL=debug
       # Database path (persisted to volume)
       - DATABASE_PATH=/app/data/librarydownloadarr.db
+
+      # Security settings
+      # CORS origin - set to your domain in production (e.g., https://library.yourdomain.com)
+      # Leave empty to only allow same-origin requests (most secure)
+      # - CORS_ORIGIN=https://library.yourdomain.com
+      # Admin login - set to 'false' to disable admin password login (Plex OAuth only)
+      # Recommended for production: disable after setting up a Plex user as admin
+      # - ADMIN_LOGIN_ENABLED=false
+
       # Transcode directory (for transcoded files, cached for 1 week)
       # IMPORTANT: Mount a fast drive for better transcoding performance
       - TRANSCODE_DIR=/app/transcode

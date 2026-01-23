@@ -17,7 +17,9 @@ export const config = {
     level: process.env.LOG_LEVEL || 'info',
   },
   cors: {
-    origin: process.env.CORS_ORIGIN || '*',
+    // SECURITY: In production, CORS_ORIGIN must be set to your specific domain
+    // Never use '*' with credentials in production
+    origin: process.env.CORS_ORIGIN || (process.env.NODE_ENV === 'production' ? false : 'http://localhost:5173'),
     credentials: true,
   },
   rateLimit: {

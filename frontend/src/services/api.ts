@@ -47,6 +47,11 @@ class ApiClient {
     return response.data.setupRequired;
   }
 
+  async checkAdminLoginEnabled(): Promise<boolean> {
+    const response = await this.client.get<{ enabled: boolean }>('/auth/admin-login-enabled');
+    return response.data.enabled;
+  }
+
   async setup(data: {
     username: string;
     password: string;

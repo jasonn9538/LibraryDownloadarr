@@ -10,8 +10,16 @@ export const Login: React.FC = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [isPlexLoading, setIsPlexLoading] = useState(false);
   const [showAdminLogin, setShowAdminLogin] = useState(false);
+  const [adminLoginEnabled, setAdminLoginEnabled] = useState<boolean | null>(null);
   const navigate = useNavigate();
   const { login, setUser, setToken, token, user } = useAuthStore();
+
+  // Check if admin login is enabled
+  useEffect(() => {
+    api.checkAdminLoginEnabled()
+      .then(setAdminLoginEnabled)
+      .catch(() => setAdminLoginEnabled(false));
+  }, []);
 
   // Redirect to home if already logged in
   useEffect(() => {
@@ -162,7 +170,8 @@ export const Login: React.FC = () => {
             </div>
           )}
 
-          {/* Secondary: Admin Login */}
+          {/* Secondary: Admin Login - only show if enabled */}
+          {adminLoginEnabled && (
           <div className="mt-8 pt-6 border-t border-dark-50">
             {!showAdminLogin ? (
               <button
@@ -220,14 +229,21 @@ export const Login: React.FC = () => {
               </div>
             )}
           </div>
+          )}
         </div>
 
         {/* Helpful note */}
         <div className="mt-6 text-center">
           <p className="text-xs text-gray-500">
-            Most users should sign in with Plex.
-            <br />
-            Administrator access is only needed for system configuration.
+            {adminLoginEnabled ? (
+              <>
+                Most users should sign in with Plex.
+                <br />
+                Administrator access is only needed for system configuration.
+              </>
+            ) : (
+              'Sign in with your Plex account to get started.'
+            )}
           </p>
         </div>
       </div>
