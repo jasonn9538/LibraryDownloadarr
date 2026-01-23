@@ -55,20 +55,16 @@ export const Transcodes: React.FC = () => {
 
   const handleDownload = (job: TranscodeJob) => {
     // Use direct browser download with token in query string
-    // This avoids buffering the entire file in memory
     const token = localStorage.getItem('token');
     const url = `${api.getTranscodeJobDownloadUrl(job.id)}?token=${encodeURIComponent(token || '')}`;
 
-    // Create a hidden iframe to trigger the download
-    const iframe = document.createElement('iframe');
-    iframe.style.display = 'none';
-    iframe.src = url;
-    document.body.appendChild(iframe);
-
-    // Clean up after a delay
-    setTimeout(() => {
-      document.body.removeChild(iframe);
-    }, 5000);
+    // Create a temporary anchor tag to trigger the download
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = job.filename || 'download.mp4';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
   };
 
   const formatFileSize = (bytes?: number): string => {
