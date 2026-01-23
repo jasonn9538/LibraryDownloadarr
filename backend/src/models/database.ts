@@ -660,6 +660,14 @@ export class DatabaseService {
     stmt.run(id);
   }
 
+  // Extend transcode job expiry (called on download to keep files that are being used)
+  extendTranscodeJobExpiry(id: string, ttlMs: number = 7 * 24 * 60 * 60 * 1000): void {
+    const newExpiry = Date.now() + ttlMs;
+    const stmt = this.db.prepare('UPDATE transcode_jobs SET expires_at = ? WHERE id = ?');
+    stmt.run(newExpiry, id);
+    logger.debug('Extended transcode job expiry', { jobId: id, newExpiry: new Date(newExpiry).toISOString() });
+  }
+
   cleanupExpiredTranscodeJobs(): TranscodeJob[] {
     // Get expired jobs that need file cleanup
     const stmt = this.db.prepare(`

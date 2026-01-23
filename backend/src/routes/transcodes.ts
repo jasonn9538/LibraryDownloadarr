@@ -265,6 +265,9 @@ export const createTranscodesRouter = (db: DatabaseService) => {
         job.fileSize
       );
 
+      // Extend expiry by 7 days from now (keeps files that are being actively downloaded)
+      db.extendTranscodeJobExpiry(jobId);
+
       const success = transcodeManager.streamCompletedJob(jobId, res);
 
       if (!success) {
