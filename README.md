@@ -22,7 +22,7 @@ LibraryDownloadarr is a modern, self-hosted web application that provides a beau
 - 📊 **Admin Dashboard** - Download history, logs, user management, and settings
 - 🚀 **Easy Setup** - Initial setup wizard with guided configuration
 - 🎥 **Resolution Selection** - Choose download quality or transcode to lower resolutions
-- ⚙️ **Transcode Queue** - Queue transcodes and download when ready (files kept for 1 week)
+- ⚙️ **Transcode Queue** - Queue transcodes and download when ready (files kept for 7 days after last download)
 - 🖥️ **Hardware Encoding** - GPU-accelerated transcoding (Intel QSV, AMD/Intel VAAPI)
 - 📦 **Bulk Downloads** - Download entire seasons or albums as ZIP files
 - 👥 **User Management** - Admin can manage users and grant admin privileges
@@ -292,12 +292,12 @@ LibraryDownloadarr includes a powerful transcode queue for downloading media at 
 1. **Select a resolution** when downloading video content (e.g., 720p, 480p)
 2. **Non-original resolutions** are queued for transcoding using ffmpeg
 3. **Navigate to the Transcodes page** to monitor progress
-4. **Download when ready** - completed files are available for 1 week
+4. **Download when ready** - completed files are kept for 7 days after the last download
 5. **Queue is shared** - if another user already transcoded the same file at the same resolution, you can download it immediately
 
 **Features:**
 - 📊 **Real-time progress** - Watch transcoding progress in the UI
-- ⏱️ **1-week retention** - Completed transcodes are kept for 7 days
+- ⏱️ **Smart retention** - Files are kept for 7 days after each download (popular files stay longer)
 - 👥 **Shared transcodes** - See and download transcodes from other users
 - 🔄 **Queue management** - Cancel pending or in-progress transcodes
 - 📱 **H.264 output** - Maximum compatibility with all devices (Main profile, Level 4.0)
@@ -334,7 +334,7 @@ To enable hardware encoding, ensure `/dev/dri` is passed to the container and th
 **Recommended (with transcoding):**
 - CPU: 4+ cores (transcoding is CPU-intensive)
 - RAM: 2 GB
-- Storage: 50+ GB for transcode cache (files kept for 1 week)
+- Storage: 50+ GB for transcode cache (files kept for 7 days after last download)
 - Network: Good bandwidth between LibraryDownloadarr and Plex server
 - Fast storage (SSD) for transcode directory improves performance
 
@@ -492,7 +492,7 @@ npm run dev
 **Solutions**:
 1. Verify transcode directory is properly mounted in docker-compose.yml
 2. Check file permissions on the transcode volume
-3. Ensure the transcode hasn't expired (files are deleted after 1 week)
+3. Ensure the transcode hasn't expired (files are deleted 7 days after last download)
 4. Check logs for any error messages during transcode completion
 
 ---

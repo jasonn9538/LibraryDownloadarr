@@ -57,8 +57,9 @@ export const Help: React.FC = () => {
                     <li><span className="text-green-400">Ready to download</span> - Finished and ready!</li>
                   </ul>
                   <p className="text-gray-400 mt-2">
-                    Transcoded files are cached for 1 week, so if you or someone else already transcoded
-                    a file, you can download it immediately.
+                    Transcoded files are kept for 7 days after the last download. If you or someone else
+                    already transcoded a file, you can download it immediately. Each download extends
+                    the file's availability by another 7 days.
                   </p>
                 </div>
               </section>

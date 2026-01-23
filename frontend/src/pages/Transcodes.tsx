@@ -252,8 +252,8 @@ export const Transcodes: React.FC = () => {
             </div>
             <p className="text-gray-400 mb-6">
               {showAll
-                ? 'Showing all transcodes from all users. Files are available for 1 week after completion.'
-                : 'Manage your transcoding queue and download completed files. Files are available for 1 week after completion.'
+                ? 'Showing all transcodes from all users. Files are kept for 7 days after last download.'
+                : 'Manage your transcoding queue and download completed files. Files are kept for 7 days after last download.'
               }
             </p>
 
