@@ -1,6 +1,14 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { api } from '../services/api';
+
+// Detect if user is on a mobile device
+const isMobileDevice = (): boolean => {
+  if (typeof navigator === 'undefined') return false;
+  return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+};
+
+const LARGE_FILE_THRESHOLD = 8 * 1024 * 1024 * 1024; // 8GB in bytes
 
 export interface ResolutionOption {
   id: string;
@@ -46,6 +54,7 @@ export const ResolutionSelector: React.FC<ResolutionSelectorProps> = ({
   const [error, setError] = useState('');
   const [position, setPosition] = useState({ top: 0, left: 0, maxHeight: 400 });
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const isMobile = useMemo(() => isMobileDevice(), []);
 
   // Calculate position based on button location and viewport
   useEffect(() => {
@@ -277,9 +286,16 @@ export const ResolutionSelector: React.FC<ResolutionSelectorProps> = ({
               </div>
               <div className="text-right">
                 {resolution.isOriginal && resolution.fileSize ? (
-                  <span className="text-xs text-gray-400">
-                    {formatFileSize(resolution.fileSize)}
-                  </span>
+                  <div className="flex flex-col items-end">
+                    <span className="text-xs text-gray-400">
+                      {formatFileSize(resolution.fileSize)}
+                    </span>
+                    {isMobile && resolution.fileSize > LARGE_FILE_THRESHOLD && (
+                      <span className="text-[10px] text-yellow-400 mt-0.5">
+                        Large file
+                      </span>
+                    )}
+                  </div>
                 ) : resolution.estimatedSize ? (
                   <span className="text-xs text-gray-500">
                     ~{formatFileSize(resolution.estimatedSize)}
