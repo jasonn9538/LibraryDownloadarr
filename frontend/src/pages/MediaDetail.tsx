@@ -191,34 +191,6 @@ export const MediaDetail: React.FC = () => {
     await startDownload(itemRatingKey, partKey, filename, itemTitle);
   };
 
-  const handleSeasonDownload = async (seasonRatingKey: string, seasonTitle: string) => {
-    try {
-      // Get size info first
-      const sizeInfo = await api.getSeasonSize(seasonRatingKey);
-
-      // Check if over 10GB and confirm
-      const tenGB = 10737418240;
-      if (sizeInfo.totalSize > tenGB) {
-        const confirmed = window.confirm(
-          `This season contains ${sizeInfo.fileCount} episodes totaling ${sizeInfo.totalSizeGB} GB.\n\nLarge downloads may take a long time and use significant bandwidth.\n\nDo you want to continue?`
-        );
-        if (!confirmed) {
-          return;
-        }
-      }
-
-      const downloadUrl = api.getSeasonDownloadUrl(seasonRatingKey);
-      const showName = media?.title || 'Unknown Show';
-      const seasonNumber = seasons.find(s => s.ratingKey === seasonRatingKey)?.index || 0;
-      const zipFilename = `${showName} - S${String(seasonNumber).padStart(2, '0')}.zip`;
-
-      // Use the download context to track the season download
-      await startDownload(seasonRatingKey, downloadUrl, zipFilename, `${seasonTitle} (Full Season)`);
-    } catch (err: any) {
-      setError(err.response?.data?.error || 'Failed to start season download');
-    }
-  };
-
   const handleAlbumDownload = async (albumRatingKey: string, albumTitle: string) => {
     try {
       // Get size info first
@@ -511,41 +483,29 @@ export const MediaDetail: React.FC = () => {
                         <div className="space-y-4">
                           {seasons.map((season) => (
                             <div key={season.ratingKey} className="card">
-                              <div className="p-3 md:p-4 flex items-center justify-between">
-                                <button
-                                  onClick={() => toggleSeason(season.ratingKey)}
-                                  className="flex-1 flex items-center space-x-3 md:space-x-4 hover:bg-dark-200 transition-colors rounded -m-3 md:-m-4 p-3 md:p-4"
-                                >
-                                  {season.thumb && (
-                                    <img
-                                      src={api.getThumbnailUrl(season.ratingKey, season.thumb)}
-                                      alt={season.title}
-                                      className="w-12 h-18 md:w-16 md:h-24 object-cover rounded"
-                                    />
+                              <button
+                                onClick={() => toggleSeason(season.ratingKey)}
+                                className="w-full p-3 md:p-4 flex items-center space-x-3 md:space-x-4 hover:bg-dark-200 transition-colors rounded"
+                              >
+                                {season.thumb && (
+                                  <img
+                                    src={api.getThumbnailUrl(season.ratingKey, season.thumb)}
+                                    alt={season.title}
+                                    className="w-12 h-18 md:w-16 md:h-24 object-cover rounded"
+                                  />
+                                )}
+                                <div className="text-left flex-1">
+                                  <div className="font-medium text-base md:text-lg">{season.title}</div>
+                                  {season.summary && (
+                                    <div className="text-xs md:text-sm text-gray-400 line-clamp-2">
+                                      {season.summary}
+                                    </div>
                                   )}
-                                  <div className="text-left flex-1">
-                                    <div className="font-medium text-base md:text-lg">{season.title}</div>
-                                    {season.summary && (
-                                      <div className="text-xs md:text-sm text-gray-400 line-clamp-2">
-                                        {season.summary}
-                                      </div>
-                                    )}
-                                  </div>
-                                  <span className="text-gray-400">
-                                    {expandedSeasons[season.ratingKey] ? '▼' : '▶'}
-                                  </span>
-                                </button>
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    handleSeasonDownload(season.ratingKey, season.title);
-                                  }}
-                                  className="btn-primary ml-2 whitespace-nowrap text-sm md:text-base px-3 md:px-4 py-2"
-                                  title="Download entire season as ZIP"
-                                >
-                                  📦 Season
-                                </button>
-                              </div>
+                                </div>
+                                <span className="text-gray-400">
+                                  {expandedSeasons[season.ratingKey] ? '▼' : '▶'}
+                                </span>
+                              </button>
 
                               {expandedSeasons[season.ratingKey] && (
                                 <div className="border-t border-dark-50 p-3 md:p-4 space-y-2">

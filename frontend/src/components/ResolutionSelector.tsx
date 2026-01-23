@@ -265,7 +265,7 @@ export const ResolutionSelector: React.FC<ResolutionSelectorProps> = ({
                       if (transcodeStatus?.status === 'completed') {
                         return <span className="text-green-400">✅ Ready to download</span>;
                       } else if (transcodeStatus?.status === 'transcoding') {
-                        return <span className="text-blue-400">⚙️ Transcoding... {transcodeStatus.progress}%</span>;
+                        return <span className="text-blue-400">⚙️ {transcodeStatus.progress === 0 ? 'Preparing to transcode...' : `Transcoding... ${transcodeStatus.progress}%`}</span>;
                       } else if (transcodeStatus?.status === 'pending') {
                         return <span className="text-yellow-400">⏳ Queued for transcoding</span>;
                       } else {

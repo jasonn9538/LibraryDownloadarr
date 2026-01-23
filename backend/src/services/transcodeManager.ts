@@ -486,10 +486,13 @@ class TranscodeManager {
           '-init_hw_device', 'vaapi=va:/dev/dri/renderD128',
           '-filter_hw_device', 'va',
           '-i', inputTempPath,
+          '-map', '0:v:0',           // Map first video stream
+          '-map', '0:a?',            // Map all audio streams (optional)
+          '-map', '0:s?',            // Map all subtitle streams (optional)
           '-vf', `format=nv12,hwupload,scale_vaapi=w=-2:h=${job.resolutionHeight}`,
           '-c:v', 'h264_vaapi',
-          '-profile:v', '77',  // Main profile
-          '-level', '40',      // Level 4.0
+          '-profile:v', '77',        // Main profile
+          '-level', '40',            // Level 4.0
           '-b:v', `${job.maxBitrate}k`,
           '-maxrate', `${job.maxBitrate}k`,
           '-bufsize', `${(job.maxBitrate || 4000) * 2}k`,
@@ -497,6 +500,9 @@ class TranscodeManager {
           '-b:a', '128k',
           '-ac', '2',
           '-ar', '48000',
+          '-c:s', 'mov_text',        // Convert subtitles to MP4-compatible format
+          '-map_metadata', '0',      // Copy all metadata
+          '-map_chapters', '0',      // Copy chapters
           '-movflags', '+faststart',
           '-f', 'mp4',
           '-y',
@@ -509,6 +515,9 @@ class TranscodeManager {
           '-init_hw_device', 'qsv=qsv:hw',
           '-filter_hw_device', 'qsv',
           '-i', inputTempPath,
+          '-map', '0:v:0',           // Map first video stream
+          '-map', '0:a?',            // Map all audio streams (optional)
+          '-map', '0:s?',            // Map all subtitle streams (optional)
           '-vf', `format=nv12,hwupload=extra_hw_frames=64,scale_qsv=w=-2:h=${job.resolutionHeight}`,
           '-c:v', 'h264_qsv',
           '-profile:v', 'main',
@@ -520,6 +529,9 @@ class TranscodeManager {
           '-b:a', '128k',
           '-ac', '2',
           '-ar', '48000',
+          '-c:s', 'mov_text',        // Convert subtitles to MP4-compatible format
+          '-map_metadata', '0',      // Copy all metadata
+          '-map_chapters', '0',      // Copy chapters
           '-movflags', '+faststart',
           '-f', 'mp4',
           '-y',
@@ -529,6 +541,9 @@ class TranscodeManager {
         // Software encoding (libx264)
         ffmpegArgs = [
           '-i', inputTempPath,
+          '-map', '0:v:0',           // Map first video stream
+          '-map', '0:a?',            // Map all audio streams (optional)
+          '-map', '0:s?',            // Map all subtitle streams (optional)
           '-vf', `scale=-2:${job.resolutionHeight}`,
           '-c:v', 'libx264',
           '-preset', 'fast',
@@ -543,6 +558,9 @@ class TranscodeManager {
           '-b:a', '128k',
           '-ac', '2',
           '-ar', '48000',
+          '-c:s', 'mov_text',        // Convert subtitles to MP4-compatible format
+          '-map_metadata', '0',      // Copy all metadata
+          '-map_chapters', '0',      // Copy chapters
           '-threads', '0',
           '-movflags', '+faststart',
           '-f', 'mp4',

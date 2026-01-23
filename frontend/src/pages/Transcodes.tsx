@@ -158,9 +158,13 @@ export const Transcodes: React.FC = () => {
             )}
             {job.status === 'transcoding' && (
               <span className="text-blue-400">
-                Transcoding... {job.progress}%
-                {job.progress > 0 && (
-                  <span className="text-gray-500 ml-2">{formatEta(job)}</span>
+                {job.progress === 0 ? (
+                  'Preparing to transcode...'
+                ) : (
+                  <>
+                    Transcoding... {job.progress}%
+                    <span className="text-gray-500 ml-2">{formatEta(job)}</span>
+                  </>
                 )}
               </span>
             )}
