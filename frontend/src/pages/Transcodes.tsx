@@ -203,7 +203,11 @@ export const Transcodes: React.FC = () => {
           )}
           {(job.status === 'pending' || job.status === 'transcoding') && isOwnJob && (
             <button
-              onClick={() => handleCancel(job.id)}
+              onClick={() => {
+                if (confirm('Are you sure you want to cancel this transcode?')) {
+                  handleCancel(job.id);
+                }
+              }}
               className="btn-secondary px-4 py-2 text-sm text-red-400 hover:text-red-300"
             >
               Cancel
@@ -220,7 +224,11 @@ export const Transcodes: React.FC = () => {
           )}
           {(job.status === 'error' || job.status === 'completed') && isOwnJob && (
             <button
-              onClick={() => handleCancel(job.id)}
+              onClick={() => {
+                if (confirm('Are you sure you want to remove this transcode? The file will be deleted.')) {
+                  handleCancel(job.id);
+                }
+              }}
               className="px-3 py-2 text-sm text-gray-400 hover:text-gray-300"
             >
               Remove
