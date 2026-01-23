@@ -36,12 +36,11 @@ WORKDIR /app
 # Install ffmpeg and hardware encoding dependencies
 # - ffmpeg: video transcoding
 # - libva/mesa-va-gallium: VAAPI support (Intel/AMD GPUs)
-# - intel-media-driver: Intel GPU VAAPI driver
-RUN apk add --no-cache \
-    ffmpeg \
-    libva \
-    mesa-va-gallium \
-    intel-media-driver
+# - intel-media-driver: Intel GPU VAAPI driver (x86_64 only)
+RUN apk add --no-cache ffmpeg libva mesa-va-gallium && \
+    if [ "$(uname -m)" = "x86_64" ]; then \
+      apk add --no-cache intel-media-driver; \
+    fi
 
 # Install production dependencies for backend
 COPY backend/package*.json ./
