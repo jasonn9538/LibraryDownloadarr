@@ -535,23 +535,55 @@ export class PlexService {
     }
   }
 
-  async getLibraryContent(libraryKey: string, userToken?: string, viewType?: string): Promise<PlexMedia[]> {
+  async getLibraryContent(
+    libraryKey: string,
+    userToken?: string,
+    options?: {
+      viewType?: string;
+      offset?: number;
+      limit?: number;
+      sort?: string;
+      order?: 'asc' | 'desc';
+    }
+  ): Promise<{ items: PlexMedia[]; totalSize: number }> {
     if (!this.plexUrl) {
       throw new Error('Plex server not configured');
     }
 
     try {
+      const viewType = options?.viewType;
       let endpoint = `/library/sections/${libraryKey}/all`;
       if (viewType === 'albums') {
         endpoint = `/library/sections/${libraryKey}/albums`;
       }
 
-      const response = await axios.get(`${this.plexUrl}${endpoint}`, this.getAxiosConfig({
+      const config = this.getAxiosConfig({
         'X-Plex-Token': userToken || '',
         'Accept': 'application/json',
-      }));
+      });
 
-      return response.data?.MediaContainer?.Metadata || [];
+      // Add pagination params
+      config.params = {};
+      if (options?.offset !== undefined) {
+        config.params['X-Plex-Container-Start'] = options.offset;
+      }
+      if (options?.limit !== undefined) {
+        config.params['X-Plex-Container-Size'] = options.limit;
+      }
+
+      // Add sorting params - Plex uses format like "titleSort:asc" or "addedAt:desc"
+      if (options?.sort) {
+        const order = options.order || 'asc';
+        config.params['sort'] = `${options.sort}:${order}`;
+      }
+
+      const response = await axios.get(`${this.plexUrl}${endpoint}`, config);
+
+      const mediaContainer = response.data?.MediaContainer;
+      const items = mediaContainer?.Metadata || [];
+      const totalSize = mediaContainer?.totalSize || mediaContainer?.size || items.length;
+
+      return { items, totalSize };
     } catch (error) {
       logger.error('Failed to get library content', { error });
       throw new Error('Failed to get library content');

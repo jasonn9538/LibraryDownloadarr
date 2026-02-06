@@ -98,14 +98,40 @@ class ApiClient {
     return response.data.libraries;
   }
 
-  async getLibraryContent(libraryKey: string, viewType?: string): Promise<MediaItem[]> {
-    const response = await this.client.get<{ content: MediaItem[] }>(
+  async getLibraryContent(
+    libraryKey: string,
+    options?: {
+      viewType?: string;
+      offset?: number;
+      limit?: number;
+      sort?: string;
+      order?: 'asc' | 'desc';
+    }
+  ): Promise<{
+    content: MediaItem[];
+    totalSize: number;
+    offset: number;
+    limit: number;
+    hasMore: boolean;
+  }> {
+    const params: Record<string, string | number> = {};
+    if (options?.viewType) params.viewType = options.viewType;
+    if (options?.offset !== undefined) params.offset = options.offset;
+    if (options?.limit !== undefined) params.limit = options.limit;
+    if (options?.sort) params.sort = options.sort;
+    if (options?.order) params.order = options.order;
+
+    const response = await this.client.get<{
+      content: MediaItem[];
+      totalSize: number;
+      offset: number;
+      limit: number;
+      hasMore: boolean;
+    }>(
       `/libraries/${libraryKey}/content`,
-      {
-        params: viewType ? { viewType } : undefined,
-      }
+      { params }
     );
-    return response.data.content;
+    return response.data;
   }
 
   // Media endpoints

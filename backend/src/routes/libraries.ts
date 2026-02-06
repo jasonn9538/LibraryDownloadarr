@@ -74,11 +74,11 @@ export const createLibrariesRouter = (db: DatabaseService) => {
     }
   });
 
-  // Get library content
+  // Get library content with pagination and sorting
   router.get('/:libraryKey/content', authMiddleware, async (req: AuthRequest, res) => {
     try {
       const { libraryKey } = req.params;
-      const { viewType } = req.query;
+      const { viewType, offset, limit, sort, order } = req.query;
 
       const { token, serverUrl, error } = getUserCredentials(req);
 
@@ -92,12 +92,31 @@ export const createLibrariesRouter = (db: DatabaseService) => {
 
       plexService.setServerConnection(serverUrl, token);
 
-      const content = await plexService.getLibraryContent(
+      // Parse pagination parameters
+      const parsedOffset = offset ? parseInt(offset as string, 10) : 0;
+      const parsedLimit = limit ? parseInt(limit as string, 10) : 50;
+
+      const result = await plexService.getLibraryContent(
         libraryKey,
         token,
-        viewType as string | undefined
+        {
+          viewType: viewType as string | undefined,
+          offset: parsedOffset,
+          limit: parsedLimit,
+          sort: sort as string | undefined,
+          order: order as 'asc' | 'desc' | undefined,
+        }
       );
-      return res.json({ content });
+
+      const hasMore = parsedOffset + result.items.length < result.totalSize;
+
+      return res.json({
+        content: result.items,
+        totalSize: result.totalSize,
+        offset: parsedOffset,
+        limit: parsedLimit,
+        hasMore,
+      });
     } catch (error) {
       logger.error('Failed to get library content', { error });
       return res.status(500).json({ error: 'Failed to get library content' });
