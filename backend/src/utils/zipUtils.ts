@@ -37,9 +37,11 @@ export const createZipStream = async (
       zlib: { level: 0 } // No compression for faster streaming (media files are already compressed)
     });
 
-    // Set response headers
+    // Set response headers (RFC 5987 encoding for non-ASCII filenames)
+    const asciiFallback = zipFilename.replace(/[^\x20-\x7E]/g, '_');
+    const utf8Encoded = encodeURIComponent(zipFilename).replace(/'/g, '%27');
     res.setHeader('Content-Type', 'application/zip');
-    res.setHeader('Content-Disposition', `attachment; filename="${zipFilename}"`);
+    res.setHeader('Content-Disposition', `attachment; filename="${asciiFallback}"; filename*=UTF-8''${utf8Encoded}`);
     res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
     res.setHeader('Pragma', 'no-cache');
     res.setHeader('Expires', '0');

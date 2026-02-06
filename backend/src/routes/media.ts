@@ -16,6 +16,15 @@ const httpsAgent = new https.Agent({
   rejectUnauthorized: false
 });
 
+// Build a Content-Disposition header value safe for non-ASCII filenames (RFC 5987)
+const buildContentDisposition = (filename: string): string => {
+  // ASCII-only fallback: replace non-ASCII chars with underscores
+  const asciiFallback = filename.replace(/[^\x20-\x7E]/g, '_');
+  // UTF-8 encoded version for modern browsers
+  const utf8Encoded = encodeURIComponent(filename).replace(/'/g, '%27');
+  return `attachment; filename="${asciiFallback}"; filename*=UTF-8''${utf8Encoded}`;
+};
+
 export const createMediaRouter = (db: DatabaseService) => {
   const router = Router();
   const authMiddleware = createAuthMiddleware(db);
@@ -483,7 +492,7 @@ export const createMediaRouter = (db: DatabaseService) => {
 
       // Set headers for download
       const filename = metadata.Media?.[0]?.Part?.[0]?.file.split('/').pop() || 'download';
-      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      res.setHeader('Content-Disposition', buildContentDisposition(filename));
       res.setHeader('Content-Type', response.headers['content-type'] || 'application/octet-stream');
       if (fileSize) {
         res.setHeader('Content-Length', fileSize.toString());

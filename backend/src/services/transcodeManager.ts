@@ -382,7 +382,10 @@ class TranscodeManager {
     }
 
     const stats = fs.statSync(job.outputPath);
-    res.setHeader('Content-Disposition', `attachment; filename="${job.filename}"`);
+    // Use RFC 5987 encoding for non-ASCII filenames
+    const asciiFallback = job.filename.replace(/[^\x20-\x7E]/g, '_');
+    const utf8Encoded = encodeURIComponent(job.filename).replace(/'/g, '%27');
+    res.setHeader('Content-Disposition', `attachment; filename="${asciiFallback}"; filename*=UTF-8''${utf8Encoded}`);
     res.setHeader('Content-Type', 'video/mp4');
     res.setHeader('Content-Length', stats.size);
 
