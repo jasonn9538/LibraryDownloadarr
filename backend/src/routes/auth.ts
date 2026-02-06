@@ -189,10 +189,62 @@ export const createAuthRouter = (db: DatabaseService) => {
     }
   });
 
+  // Plex OAuth: Callback page that auto-closes after authentication
+  // This is the forwardUrl that Plex redirects to after successful auth
+  router.get('/plex/callback', (_req, res) => {
+    // Send a simple HTML page that closes itself
+    // The actual auth is handled by polling from the frontend
+    res.send(`<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>LibraryDownloadarr - Authentication Complete</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #0a0a0f;
+      color: #fff;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      margin: 0;
+      text-align: center;
+    }
+    .container { padding: 2rem; }
+    h1 { color: #e87c03; margin-bottom: 1rem; }
+    p { color: #9ca3af; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>✓ Authentication Complete</h1>
+    <p>This window will close automatically...</p>
+    <p style="font-size: 0.875rem; margin-top: 1rem;">If it doesn't close, you can close it manually.</p>
+  </div>
+  <script>
+    // Try to close the window immediately
+    window.close();
+    // Fallback: try again after a short delay (some browsers need this)
+    setTimeout(function() { window.close(); }, 100);
+    setTimeout(function() { window.close(); }, 500);
+  </script>
+</body>
+</html>`);
+  });
+
   // Plex OAuth: Generate PIN
-  router.post('/plex/pin', async (_req, res) => {
+  router.post('/plex/pin', async (req, res) => {
     try {
       const pin = await plexService.generatePin();
+
+      // Build the callback URL for auto-closing the popup
+      // Use the origin from the request or fall back to relative path
+      const protocol = req.headers['x-forwarded-proto'] || req.protocol;
+      const host = req.headers['x-forwarded-host'] || req.headers.host;
+      const callbackUrl = host ? `${protocol}://${host}/api/auth/plex/callback` : '/api/auth/plex/callback';
+
       return res.json({
         id: pin.id,
         code: pin.code,
@@ -200,7 +252,7 @@ export const createAuthRouter = (db: DatabaseService) => {
           'librarydownloadarr'
         )}&code=${encodeURIComponent(pin.code)}&context[device][product]=${encodeURIComponent(
           'LibraryDownloadarr'
-        )}`,
+        )}&forwardUrl=${encodeURIComponent(callbackUrl)}`,
       });
     } catch (error) {
       logger.error('Plex PIN generation error', { error });

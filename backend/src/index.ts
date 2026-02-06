@@ -41,7 +41,7 @@ app.use(helmet({
       fontSrc: ["'self'"],
       objectSrc: ["'none'"],
       mediaSrc: ["'self'", "blob:"],
-      frameSrc: ["'none'"],
+      frameSrc: ["'self'"], // Needed for iframe-based downloads
       formAction: ["'self'"],
       upgradeInsecureRequests: [],
     },
