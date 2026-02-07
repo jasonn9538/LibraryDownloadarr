@@ -4,6 +4,7 @@ import { DatabaseService } from '../models/database';
 import { plexService } from '../services/plexService';
 import { logger } from '../utils/logger';
 import { AuthRequest, createAuthMiddleware } from '../middleware/auth';
+import net from 'net';
 
 // Brute force protection constants
 const MAX_FAILED_ATTEMPTS = 5;
@@ -12,6 +13,52 @@ const LOCKOUT_DURATION_MS = 15 * 60 * 1000; // 15 minutes
 // Admin login can be disabled via environment variable for better security
 // When disabled, only Plex OAuth is available
 const ADMIN_LOGIN_ENABLED = process.env.ADMIN_LOGIN_ENABLED !== 'false';
+
+/**
+ * Check if an IP address is in a private/local network range.
+ * Covers loopback, RFC 1918, link-local, and IPv4-mapped IPv6.
+ */
+function isPrivateIp(ip: string): boolean {
+  // Handle IPv4-mapped IPv6 (e.g., ::ffff:192.168.1.1)
+  let normalizedIp = ip;
+  if (normalizedIp.startsWith('::ffff:')) {
+    normalizedIp = normalizedIp.slice(7);
+  }
+
+  // IPv6 loopback
+  if (normalizedIp === '::1') return true;
+
+  // IPv6 link-local (fe80::/10)
+  if (normalizedIp.toLowerCase().startsWith('fe80:')) return true;
+
+  // Check IPv4 ranges
+  if (net.isIPv4(normalizedIp)) {
+    const parts = normalizedIp.split('.').map(Number);
+    // Loopback: 127.0.0.0/8
+    if (parts[0] === 127) return true;
+    // 10.0.0.0/8
+    if (parts[0] === 10) return true;
+    // 172.16.0.0/12 (172.16.x.x - 172.31.x.x)
+    if (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) return true;
+    // 192.168.0.0/16
+    if (parts[0] === 192 && parts[1] === 168) return true;
+    // Link-local: 169.254.0.0/16
+    if (parts[0] === 169 && parts[1] === 254) return true;
+  }
+
+  return false;
+}
+
+/**
+ * Check if the request originates from a local/private network.
+ * Uses req.socket.remoteAddress (raw TCP address) which cannot be spoofed,
+ * unlike X-Forwarded-For headers.
+ */
+function isLocalRequest(req: Request): boolean {
+  const socketAddr = req.socket.remoteAddress;
+  if (!socketAddr) return false;
+  return isPrivateIp(socketAddr);
+}
 
 function getClientIp(req: Request): string {
   // Support for reverse proxies
@@ -39,13 +86,19 @@ export const createAuthRouter = (db: DatabaseService) => {
   });
 
   // Check if admin login is enabled (for frontend to show/hide login form)
-  router.get('/admin-login-enabled', (_req, res) => {
-    return res.json({ enabled: ADMIN_LOGIN_ENABLED });
+  // Only report as enabled when the request comes from a local/private network
+  router.get('/admin-login-enabled', (req, res) => {
+    return res.json({ enabled: ADMIN_LOGIN_ENABLED && isLocalRequest(req) });
   });
 
-  // Initial admin setup
+  // Initial admin setup — only available from local network
   router.post('/setup', async (req, res) => {
     try {
+      if (!isLocalRequest(req)) {
+        logger.warn('Remote setup attempt blocked', { ip: req.socket.remoteAddress });
+        return res.status(403).json({ error: 'Initial setup is only available from the local network' });
+      }
+
       // SECURITY: Setup can be disabled if admin login is disabled and there's already an OAuth admin
       if (!ADMIN_LOGIN_ENABLED && db.hasAdminUser()) {
         return res.status(403).json({ error: 'Admin login is disabled' });
@@ -108,13 +161,19 @@ export const createAuthRouter = (db: DatabaseService) => {
     }
   });
 
-  // Admin login
+  // Admin login — only available from local network
   router.post('/login', async (req, res) => {
     try {
       // SECURITY: Admin login can be disabled via environment variable
       if (!ADMIN_LOGIN_ENABLED) {
         logger.warn('Admin login attempt when disabled', { ip: getClientIp(req) });
         return res.status(403).json({ error: 'Admin login is disabled. Please use Plex authentication.' });
+      }
+
+      // SECURITY: Admin login only allowed from local/private network
+      if (!isLocalRequest(req)) {
+        logger.warn('Remote admin login attempt blocked', { ip: req.socket.remoteAddress });
+        return res.status(403).json({ error: 'Admin login is only available from the local network' });
       }
 
       const ip = getClientIp(req);
@@ -192,8 +251,9 @@ export const createAuthRouter = (db: DatabaseService) => {
   // Plex OAuth: Callback page that auto-closes after authentication
   // This is the forwardUrl that Plex redirects to after successful auth
   router.get('/plex/callback', (_req, res) => {
-    // Send a simple HTML page that closes itself
-    // The actual auth is handled by polling from the frontend
+    // Send a page that notifies the parent window via postMessage and attempts to close.
+    // Browsers block window.close() on tabs that navigated through cross-origin (app.plex.tv),
+    // so postMessage lets the parent (same-origin opener) close the popup instead.
     res.send(`<!DOCTYPE html>
 <html>
 <head>
@@ -215,20 +275,40 @@ export const createAuthRouter = (db: DatabaseService) => {
     .container { padding: 2rem; }
     h1 { color: #e87c03; margin-bottom: 1rem; }
     p { color: #9ca3af; }
+    .close-btn {
+      display: none;
+      margin-top: 1.5rem;
+      padding: 0.75rem 2rem;
+      background: #e87c03;
+      color: #fff;
+      border: none;
+      border-radius: 0.5rem;
+      font-size: 1rem;
+      cursor: pointer;
+    }
+    .close-btn:hover { background: #d06a00; }
   </style>
 </head>
 <body>
   <div class="container">
-    <h1>✓ Authentication Complete</h1>
+    <h1>Authentication Complete</h1>
     <p>This window will close automatically...</p>
-    <p style="font-size: 0.875rem; margin-top: 1rem;">If it doesn't close, you can close it manually.</p>
+    <button class="close-btn" id="closeBtn" onclick="window.close()">Close this window</button>
   </div>
   <script>
-    // Try to close the window immediately
+    // Notify the parent window that auth is complete
+    if (window.opener) {
+      try { window.opener.postMessage({ type: 'plex-auth-complete' }, '*'); } catch(e) {}
+    }
+    // Try to close the window
     window.close();
-    // Fallback: try again after a short delay (some browsers need this)
     setTimeout(function() { window.close(); }, 100);
     setTimeout(function() { window.close(); }, 500);
+    // If still open after 1.5s, show manual close button
+    setTimeout(function() {
+      document.getElementById('closeBtn').style.display = 'inline-block';
+      document.querySelector('p').textContent = 'You can close this window now.';
+    }, 1500);
   </script>
 </body>
 </html>`);

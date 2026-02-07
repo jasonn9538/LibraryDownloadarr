@@ -51,6 +51,16 @@ export const Login: React.FC = () => {
     // Mobile browsers block window.open() if it's not directly in the click handler
     const authWindow = window.open('about:blank', '_blank', 'width=600,height=700');
 
+    // Listen for postMessage from the popup callback page
+    // This is a reliable way to close the popup even when window.close() is blocked
+    // by the browser due to cross-origin navigation through app.plex.tv
+    const handleMessage = (event: MessageEvent) => {
+      if (event.data?.type === 'plex-auth-complete' && authWindow && !authWindow.closed) {
+        authWindow.close();
+      }
+    };
+    window.addEventListener('message', handleMessage);
+
     try {
       // Generate PIN
       const pin = await api.generatePlexPin();
@@ -60,6 +70,7 @@ export const Login: React.FC = () => {
         authWindow.location.href = pin.url;
       } else {
         // Fallback if popup was blocked
+        window.removeEventListener('message', handleMessage);
         setError('Popup blocked. Please allow popups for this site and try again.');
         setIsPlexLoading(false);
         return;
@@ -75,6 +86,7 @@ export const Login: React.FC = () => {
         try {
           const response = await api.authenticatePlexPin(pin.id);
           clearInterval(pollInterval);
+          window.removeEventListener('message', handleMessage);
           // Close the Plex auth window
           if (authWindow && !authWindow.closed) {
             authWindow.close();
@@ -87,6 +99,7 @@ export const Login: React.FC = () => {
           // Check if this is a 403 (access denied) error
           if (err.response?.status === 403) {
             clearInterval(pollInterval);
+            window.removeEventListener('message', handleMessage);
             if (authWindow && !authWindow.closed) {
               authWindow.close();
             }
@@ -98,6 +111,7 @@ export const Login: React.FC = () => {
           // Check if this is a 500 (server error) - likely machine ID not configured
           if (err.response?.status === 500) {
             clearInterval(pollInterval);
+            window.removeEventListener('message', handleMessage);
             if (authWindow && !authWindow.closed) {
               authWindow.close();
             }
@@ -109,6 +123,7 @@ export const Login: React.FC = () => {
           // Check for timeout
           if (attempts >= maxAttempts) {
             clearInterval(pollInterval);
+            window.removeEventListener('message', handleMessage);
             if (authWindow && !authWindow.closed) {
               authWindow.close();
             }
@@ -119,6 +134,7 @@ export const Login: React.FC = () => {
         }
       }, 2000);
     } catch (err: any) {
+      window.removeEventListener('message', handleMessage);
       setError(err.response?.data?.error || 'Failed to initiate Plex login');
       setIsPlexLoading(false);
       // Close the blank window if PIN generation failed

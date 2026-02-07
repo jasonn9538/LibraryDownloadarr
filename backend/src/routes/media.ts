@@ -540,6 +540,7 @@ export const createMediaRouter = (db: DatabaseService) => {
 
       // Get available resolution presets based on source resolution
       const availableResolutions = getAvailableResolutions(sourceHeight);
+      const sourceBitrate = sourceMedia.bitrate || 0; // kbps from Plex
 
       // Add "Original" option at the top
       const resolutions = [
@@ -554,15 +555,23 @@ export const createMediaRouter = (db: DatabaseService) => {
           container: sourceMedia.container,
           fileSize: sourceMedia.Part?.[0]?.size,
         },
-        ...availableResolutions.map(r => ({
-          ...r,
-          isOriginal: false,
-          // Estimate file size based on video + audio bitrate and duration
-          // Audio is typically ~128-192kbps for AAC, using 160kbps as estimate
-          estimatedSize: sourceMedia.duration
-            ? Math.round(((r.maxVideoBitrate + 160) * 1000 * (sourceMedia.duration / 1000)) / 8)
-            : undefined,
-        })),
+        ...availableResolutions.map(r => {
+          // Cap the target bitrate to the source bitrate so we never upscale quality
+          // (e.g., a 1080p source at 1 Mbps shouldn't be transcoded to 720p at 4 Mbps)
+          const cappedBitrate = sourceBitrate > 0
+            ? Math.min(r.maxVideoBitrate, sourceBitrate)
+            : r.maxVideoBitrate;
+          return {
+            ...r,
+            maxVideoBitrate: cappedBitrate,
+            isOriginal: false,
+            // Estimate file size based on video + audio bitrate and duration
+            // Audio is typically ~128-192kbps for AAC, using 160kbps as estimate
+            estimatedSize: sourceMedia.duration
+              ? Math.round(((cappedBitrate + 160) * 1000 * (sourceMedia.duration / 1000)) / 8)
+              : undefined,
+          };
+        }),
       ];
 
       return res.json({

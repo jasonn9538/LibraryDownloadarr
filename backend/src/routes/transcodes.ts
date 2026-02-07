@@ -163,6 +163,12 @@ export const createTranscodesRouter = (db: DatabaseService) => {
         });
       }
 
+      // Cap the target bitrate to the source bitrate so we never increase file size
+      const sourceBitrate = sourceMedia.bitrate || 0;
+      const targetBitrate = sourceBitrate > 0
+        ? Math.min(resolutionPreset.maxVideoBitrate, sourceBitrate)
+        : resolutionPreset.maxVideoBitrate;
+
       // Check download permission
       const isExplicitlyDisabled = metadata.allowSync === false ||
                                    metadata.allowSync === 0 ||
@@ -195,7 +201,7 @@ export const createTranscodesRouter = (db: DatabaseService) => {
         resolutionId,
         resolutionPreset.label,
         resolutionPreset.height,
-        resolutionPreset.maxVideoBitrate,
+        targetBitrate,
         mediaTitle,
         mediaType,
         filename
@@ -266,6 +272,12 @@ export const createTranscodesRouter = (db: DatabaseService) => {
             continue;
           }
 
+          // Cap the target bitrate to the source bitrate
+          const sourceBitrate = sourceMedia.bitrate || 0;
+          const targetBitrate = sourceBitrate > 0
+            ? Math.min(resolutionPreset.maxVideoBitrate, sourceBitrate)
+            : resolutionPreset.maxVideoBitrate;
+
           const originalFilename = sourceMedia.Part?.[0]?.file.split('/').pop() || 'download';
           const baseName = originalFilename.replace(/\.[^/.]+$/, '');
           const filename = `${baseName}_${resolutionPreset.id}.mp4`;
@@ -281,7 +293,7 @@ export const createTranscodesRouter = (db: DatabaseService) => {
             resolutionId,
             resolutionPreset.label,
             resolutionPreset.height,
-            resolutionPreset.maxVideoBitrate,
+            targetBitrate,
             mediaTitle,
             metadata.type || 'video',
             filename
