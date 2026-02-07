@@ -60,9 +60,8 @@ if (config.cors.origin) {
   logger.info('CORS disabled - only same-origin requests allowed');
 }
 
-// Rate limiting
+// Rate limiting - exempt worker routes from global rate limit
 const limiter = rateLimit(config.rateLimit);
-app.use('/api/', limiter);
 
 // Body parsing
 app.use(express.json());
@@ -73,6 +72,12 @@ app.get('/api/health', (_req, res) => {
   return res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
+// Worker routes WITHOUT rate limiting (must come before rate limiter)
+app.use('/api/worker', createWorkerRouter(db));
+
+// Apply rate limiter to all OTHER /api/ routes
+app.use('/api/', limiter);
+
 // Routes
 app.use('/api/auth', createAuthRouter(db));
 app.use('/api/libraries', createLibrariesRouter(db));
@@ -81,7 +86,6 @@ app.use('/api/settings', createSettingsRouter(db));
 app.use('/api/logs', createLogsRouter(db));
 app.use('/api/transcodes', createTranscodesRouter(db));
 app.use('/api/users', createUsersRouter(db));
-app.use('/api/worker', createWorkerRouter(db));
 
 // Serve static files (frontend)
 const publicPath = path.join(__dirname, '..', 'public');

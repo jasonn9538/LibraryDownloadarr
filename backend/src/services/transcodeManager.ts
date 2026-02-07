@@ -12,7 +12,7 @@ import { plexService } from './plexService';
 const CACHE_DIR = process.env.TRANSCODE_DIR || '/app/transcode';
 const CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 1 week
 const DEFAULT_MAX_CONCURRENT = parseInt(process.env.MAX_CONCURRENT_TRANSCODES || '2', 10);
-const STALE_WORKER_TIMEOUT_MS = 2 * 60 * 1000; // 2 minutes
+const STALE_WORKER_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes (increased to allow slow uploads)
 const HARDWARE_ENCODING = process.env.HARDWARE_ENCODING || 'auto'; // auto, vaapi, qsv, software
 
 // SECURITY: Validate that a path is safe (no path traversal)

@@ -14,7 +14,7 @@ const httpsAgent = new https.Agent({ rejectUnauthorized: false });
 export class JobRunner {
   private apiClient: ApiClient;
   private gpuCapabilities: GpuCapabilities;
-  private activeJobs: Map<string, ChildProcess> = new Map();
+  private activeJobs: Map<string, ChildProcess | null> = new Map();
   private pollInterval: NodeJS.Timeout | null = null;
   private heartbeatInterval: NodeJS.Timeout | null = null;
   private shuttingDown = false;
@@ -52,7 +52,7 @@ export class JobRunner {
     // Kill active ffmpeg processes
     for (const [jobId, process] of this.activeJobs) {
       logger.info('Killing active transcode', { jobId });
-      if (!process.killed) {
+      if (process && !process.killed) {
         process.kill('SIGTERM');
       }
     }
@@ -71,6 +71,9 @@ export class JobRunner {
     try {
       const claimed = await this.apiClient.claimJob();
       if (!claimed) return;
+
+      // Track job IMMEDIATELY after claim (before download starts)
+      this.activeJobs.set(claimed.job.id, null);
 
       logger.info('Claimed job', {
         jobId: claimed.job.id,

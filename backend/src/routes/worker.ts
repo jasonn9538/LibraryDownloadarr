@@ -160,6 +160,14 @@ export const createWorkerRouter = (db: DatabaseService) => {
       const { jobId } = req.params;
       const workerId = req.workerId;
 
+      // UPDATE HEARTBEAT IMMEDIATELY to prevent stale detection during upload
+      if (workerId) {
+        const worker = db.getWorker(workerId);
+        if (worker) {
+          db.updateWorkerHeartbeat(workerId, worker.activeJobs);
+        }
+      }
+
       const job = db.getTranscodeJob(jobId);
       if (!job) {
         // Clean up uploaded file
