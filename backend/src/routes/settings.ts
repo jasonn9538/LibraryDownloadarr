@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { DatabaseService } from '../models/database';
 import { plexService } from '../services/plexService';
+import { transcodeManager } from '../services/transcodeManager';
 import { logger } from '../utils/logger';
 import { AuthRequest, createAuthMiddleware, createAdminMiddleware } from '../middleware/auth';
 
@@ -32,6 +33,7 @@ export const createSettingsRouter = (db: DatabaseService) => {
           plexMachineId,
           plexServerName,
           pathMappings,
+          maxConcurrentTranscodes: transcodeManager.getMaxConcurrent(),
         },
       });
     } catch (error) {
@@ -43,7 +45,18 @@ export const createSettingsRouter = (db: DatabaseService) => {
   // Update settings (admin only)
   router.put('/', authMiddleware, adminMiddleware, async (req: AuthRequest, res) => {
     try {
-      const { plexUrl, plexToken, pathMappings } = req.body;
+      const { plexUrl, plexToken, pathMappings, maxConcurrentTranscodes } = req.body;
+
+      // Handle max concurrent transcodes
+      if (maxConcurrentTranscodes !== undefined) {
+        const val = parseInt(maxConcurrentTranscodes, 10);
+        if (isNaN(val) || val < 1 || val > 10) {
+          return res.status(400).json({ error: 'Max concurrent transcodes must be between 1 and 10' });
+        }
+        db.setSetting('max_concurrent_transcodes', String(val));
+        transcodeManager.setMaxConcurrent(val);
+        logger.info('Max concurrent transcodes updated', { value: val });
+      }
 
       if (plexUrl) {
         db.setSetting('plex_url', plexUrl);

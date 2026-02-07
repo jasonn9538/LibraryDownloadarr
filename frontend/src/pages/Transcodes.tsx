@@ -10,6 +10,7 @@ export const Transcodes: React.FC = () => {
   const [allJobs, setAllJobs] = useState<TranscodeJob[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [showAll, setShowAll] = useState(false);
+  const [collapsedSections, setCollapsedSections] = useState<Record<string, boolean>>({});
 
   const loadJobs = useCallback(async () => {
     try {
@@ -269,55 +270,79 @@ export const Transcodes: React.FC = () => {
               <div className="text-center text-gray-400 py-8">Loading...</div>
             ) : (
               <div className="space-y-8">
+                {/* Ready to Download */}
+                {completedJobs.length > 0 && (
+                  <section>
+                    <button
+                      onClick={() => setCollapsedSections(s => ({ ...s, completed: !s.completed }))}
+                      className="text-lg font-semibold text-green-400 mb-3 flex items-center gap-2 w-full text-left hover:text-green-300 transition-colors"
+                    >
+                      <span className={`transition-transform ${collapsedSections.completed ? '' : 'rotate-90'}`}>▶</span>
+                      <span>✅</span>
+                      Ready to Download ({completedJobs.length})
+                    </button>
+                    {!collapsedSections.completed && (
+                      <div className="space-y-3">
+                        {completedJobs.map(job => renderJobCard(job))}
+                      </div>
+                    )}
+                  </section>
+                )}
+
                 {/* Processing */}
                 {transcodingJobs.length > 0 && (
                   <section>
-                    <h3 className="text-lg font-semibold text-blue-400 mb-3 flex items-center gap-2">
+                    <button
+                      onClick={() => setCollapsedSections(s => ({ ...s, transcoding: !s.transcoding }))}
+                      className="text-lg font-semibold text-blue-400 mb-3 flex items-center gap-2 w-full text-left hover:text-blue-300 transition-colors"
+                    >
+                      <span className={`transition-transform ${collapsedSections.transcoding ? '' : 'rotate-90'}`}>▶</span>
                       <span className="animate-pulse">⚙️</span>
                       Processing ({transcodingJobs.length})
-                    </h3>
-                    <div className="space-y-3">
-                      {transcodingJobs.map(job => renderJobCard(job))}
-                    </div>
+                    </button>
+                    {!collapsedSections.transcoding && (
+                      <div className="space-y-3">
+                        {transcodingJobs.map(job => renderJobCard(job))}
+                      </div>
+                    )}
                   </section>
                 )}
 
                 {/* Queued */}
                 {pendingJobs.length > 0 && (
                   <section>
-                    <h3 className="text-lg font-semibold text-gray-400 mb-3 flex items-center gap-2">
+                    <button
+                      onClick={() => setCollapsedSections(s => ({ ...s, pending: !s.pending }))}
+                      className="text-lg font-semibold text-gray-400 mb-3 flex items-center gap-2 w-full text-left hover:text-gray-300 transition-colors"
+                    >
+                      <span className={`transition-transform ${collapsedSections.pending ? '' : 'rotate-90'}`}>▶</span>
                       <span>⏳</span>
                       Queued ({pendingJobs.length})
-                    </h3>
-                    <div className="space-y-3">
-                      {pendingJobs.map(job => renderJobCard(job))}
-                    </div>
-                  </section>
-                )}
-
-                {/* Ready to Download */}
-                {completedJobs.length > 0 && (
-                  <section>
-                    <h3 className="text-lg font-semibold text-green-400 mb-3 flex items-center gap-2">
-                      <span>✅</span>
-                      Ready to Download ({completedJobs.length})
-                    </h3>
-                    <div className="space-y-3">
-                      {completedJobs.map(job => renderJobCard(job))}
-                    </div>
+                    </button>
+                    {!collapsedSections.pending && (
+                      <div className="space-y-3">
+                        {pendingJobs.map(job => renderJobCard(job))}
+                      </div>
+                    )}
                   </section>
                 )}
 
                 {/* Errors */}
                 {errorJobs.length > 0 && (
                   <section>
-                    <h3 className="text-lg font-semibold text-red-400 mb-3 flex items-center gap-2">
+                    <button
+                      onClick={() => setCollapsedSections(s => ({ ...s, error: !s.error }))}
+                      className="text-lg font-semibold text-red-400 mb-3 flex items-center gap-2 w-full text-left hover:text-red-300 transition-colors"
+                    >
+                      <span className={`transition-transform ${collapsedSections.error ? '' : 'rotate-90'}`}>▶</span>
                       <span>❌</span>
                       Failed ({errorJobs.length})
-                    </h3>
-                    <div className="space-y-3">
-                      {errorJobs.map(job => renderJobCard(job))}
-                    </div>
+                    </button>
+                    {!collapsedSections.error && (
+                      <div className="space-y-3">
+                        {errorJobs.map(job => renderJobCard(job))}
+                      </div>
+                    )}
                   </section>
                 )}
 

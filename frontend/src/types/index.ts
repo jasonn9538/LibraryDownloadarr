@@ -80,4 +80,5 @@ export interface Settings {
   plexMachineId?: string;
   plexServerName?: string;
   pathMappings?: PathMapping[];
+  maxConcurrentTranscodes?: number;
 }

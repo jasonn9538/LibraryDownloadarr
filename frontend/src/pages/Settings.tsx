@@ -23,6 +23,11 @@ export const Settings: React.FC = () => {
   const [isSavingMappings, setIsSavingMappings] = useState(false);
   const [mappingsMessage, setMappingsMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
+  // Transcoding state
+  const [maxConcurrentTranscodes, setMaxConcurrentTranscodes] = useState(2);
+  const [isSavingTranscoding, setIsSavingTranscoding] = useState(false);
+  const [transcodingMessage, setTranscodingMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
   // Password change state
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -40,6 +45,7 @@ export const Settings: React.FC = () => {
       setSettings(data);
       setPlexUrl(data.plexUrl);
       setPathMappings(data.pathMappings || []);
+      setMaxConcurrentTranscodes(data.maxConcurrentTranscodes ?? 2);
     } catch (err) {
       setMessage({ type: 'error', text: 'Failed to load settings' });
     } finally {
@@ -180,6 +186,24 @@ export const Settings: React.FC = () => {
       setMappingsMessage({ type: 'error', text: err.response?.data?.error || 'Failed to save path mappings' });
     } finally {
       setIsSavingMappings(false);
+    }
+  };
+
+  const handleSaveTranscoding = async () => {
+    if (maxConcurrentTranscodes < 1 || maxConcurrentTranscodes > 10) {
+      setTranscodingMessage({ type: 'error', text: 'Must be between 1 and 10' });
+      return;
+    }
+    setIsSavingTranscoding(true);
+    setTranscodingMessage(null);
+
+    try {
+      await api.updateSettings({ maxConcurrentTranscodes } as any);
+      setTranscodingMessage({ type: 'success', text: 'Transcoding settings saved successfully' });
+    } catch (err: any) {
+      setTranscodingMessage({ type: 'error', text: err.response?.data?.error || 'Failed to save transcoding settings' });
+    } finally {
+      setIsSavingTranscoding(false);
     }
   };
 
@@ -371,6 +395,51 @@ export const Settings: React.FC = () => {
                     }`}
                   >
                     {mappingsMessage.text}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="card p-4 md:p-6 mt-4 md:mt-6">
+              <h2 className="text-xl md:text-2xl font-semibold mb-2">Transcoding</h2>
+              <p className="text-xs md:text-sm text-gray-500 mb-4">
+                Configure transcoding behavior. Changes take effect immediately.
+              </p>
+
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-sm md:text-base font-medium mb-2">Max Concurrent Transcodes</label>
+                  <input
+                    type="number"
+                    className="input text-sm md:text-base w-24"
+                    min={1}
+                    max={10}
+                    value={maxConcurrentTranscodes}
+                    onChange={(e) => setMaxConcurrentTranscodes(parseInt(e.target.value, 10) || 1)}
+                  />
+                  <p className="text-xs md:text-sm text-gray-500 mt-1">
+                    Number of transcodes that can run simultaneously (1-10). Higher values use more CPU/GPU resources.
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={handleSaveTranscoding}
+                  disabled={isSavingTranscoding}
+                  className="btn-primary text-sm"
+                >
+                  {isSavingTranscoding ? 'Saving...' : 'Save Transcoding Settings'}
+                </button>
+
+                {transcodingMessage && (
+                  <div
+                    className={`px-4 py-3 rounded-lg text-xs md:text-sm ${
+                      transcodingMessage.type === 'success'
+                        ? 'bg-green-500/10 border border-green-500/20 text-green-400'
+                        : 'bg-red-500/10 border border-red-500/20 text-red-400'
+                    }`}
+                  >
+                    {transcodingMessage.text}
                   </div>
                 )}
               </div>

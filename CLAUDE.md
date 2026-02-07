@@ -6,9 +6,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **After making code changes, ALWAYS:**
 1. Run `cd frontend && npx tsc --noEmit` and `cd backend && npx tsc --noEmit` to catch errors
-2. Commit and push to main (triggers GitHub Actions Docker build)
-3. Run `./deploy.sh` to wait for the build and redeploy via Portainer
-4. If you need a quick local deploy without waiting for GitHub Actions: `./deploy.sh --local`
+2. Commit changes to main
+3. Push to origin (`git push origin main`) — this triggers GitHub Actions Docker build
+4. Run `./deploy.sh` in the background — it validates TypeScript, waits for the GH Actions build to finish, pulls the new image, and redeploys via Portainer API automatically
+5. For quick iteration without waiting for GitHub Actions: `./deploy.sh --local` (builds Docker image locally then redeploys)
+
+**IMPORTANT:** Always use `./deploy.sh` to deploy. Do NOT manually push and restart — the script handles the full pipeline (validate → push triggers GH build → wait → pull → Portainer stop/start → health check).
 
 **Think about ways to make testing and deployment easier. If you find improvements, add them to this file.**
 
@@ -42,7 +45,7 @@ There are **no tests** in this project. Type-checking (`tsc --noEmit`) is the pr
 - **Database**: SQLite via better-sqlite3 in `backend/src/models/database.ts` (single file, ~1000 lines, handles all CRUD + schema migrations)
 - **Auth**: Token-based sessions in `backend/src/middleware/auth.ts` - supports Bearer header and `?token=` query param (for iframe downloads)
 - **Plex integration**: `backend/src/services/plexService.ts` - all Plex API calls
-- **Transcoding**: `backend/src/services/transcodeManager.ts` - ffmpeg queue with max 2 concurrent, hardware encoding support
+- **Transcoding**: `backend/src/services/transcodeManager.ts` - ffmpeg queue with configurable max concurrent (default 2, adjustable 1-10 in Settings), hardware encoding support
 - **Routes**: `backend/src/routes/` - auth, media, libraries, transcodes, settings, logs, users
 
 ### Frontend (React 18 + Vite + Tailwind)

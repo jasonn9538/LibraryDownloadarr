@@ -11,7 +11,7 @@ import { plexService } from './plexService';
 // Directory for cached transcodes - configurable via environment variable
 const CACHE_DIR = process.env.TRANSCODE_DIR || '/app/transcode';
 const CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 1 week
-const MAX_CONCURRENT_TRANSCODES = parseInt(process.env.MAX_CONCURRENT_TRANSCODES || '2', 10);
+const DEFAULT_MAX_CONCURRENT = parseInt(process.env.MAX_CONCURRENT_TRANSCODES || '2', 10);
 const HARDWARE_ENCODING = process.env.HARDWARE_ENCODING || 'auto'; // auto, vaapi, qsv, software
 
 // SECURITY: Validate that a path is safe (no path traversal)
@@ -119,12 +119,23 @@ interface ActiveTranscode {
 class TranscodeManager {
   private db: DatabaseService | null = null;
   private activeTranscodes: Map<string, ActiveTranscode> = new Map();
+  private startingTranscodes: Set<string> = new Set(); // Track jobs being set up (before ffmpeg starts)
   private cleanupInterval: NodeJS.Timeout | null = null;
   private workerInterval: NodeJS.Timeout | null = null;
   private initialized: boolean = false;
+  private maxConcurrent: number = DEFAULT_MAX_CONCURRENT;
 
   initialize(db: DatabaseService): void {
     this.db = db;
+
+    // Load max concurrent setting from database (env var as fallback)
+    const savedMax = db.getSetting('max_concurrent_transcodes');
+    if (savedMax) {
+      const parsed = parseInt(savedMax, 10);
+      if (!isNaN(parsed) && parsed >= 1 && parsed <= 10) {
+        this.maxConcurrent = parsed;
+      }
+    }
 
     // Check if transcode directory is configured
     if (!process.env.TRANSCODE_DIR) {
@@ -137,7 +148,7 @@ class TranscodeManager {
         fs.mkdirSync(CACHE_DIR, { recursive: true });
       }
       this.initialized = true;
-      logger.info('Transcode manager initialized', { cacheDir: CACHE_DIR, maxConcurrent: MAX_CONCURRENT_TRANSCODES });
+      logger.info('Transcode manager initialized', { cacheDir: CACHE_DIR, maxConcurrent: this.maxConcurrent });
     } catch (err) {
       logger.error('Failed to create transcode directory', {
         cacheDir: CACHE_DIR,
@@ -185,6 +196,17 @@ class TranscodeManager {
 
   isInitialized(): boolean {
     return this.initialized;
+  }
+
+  getMaxConcurrent(): number {
+    return this.maxConcurrent;
+  }
+
+  setMaxConcurrent(n: number): void {
+    this.maxConcurrent = Math.max(1, Math.min(10, n));
+    logger.info('Max concurrent transcodes updated', { maxConcurrent: this.maxConcurrent });
+    // Process queue in case limit was raised and pending jobs can now start
+    this.processQueue();
   }
 
   getCacheDir(): string {
@@ -402,21 +424,25 @@ class TranscodeManager {
   private async processQueue(): Promise<void> {
     if (!this.db || !this.initialized) return;
 
-    // Check how many transcodes are currently active
-    const activeCount = this.activeTranscodes.size;
-    if (activeCount >= MAX_CONCURRENT_TRANSCODES) {
+    // Check how many transcodes are currently active or starting
+    const busyCount = this.activeTranscodes.size + this.startingTranscodes.size;
+    if (busyCount >= this.maxConcurrent) {
       return;
     }
 
     // Get pending jobs
-    const pendingJobs = this.db.getPendingTranscodeJobs(MAX_CONCURRENT_TRANSCODES - activeCount);
+    const slotsAvailable = this.maxConcurrent - busyCount;
+    const pendingJobs = this.db.getPendingTranscodeJobs(slotsAvailable);
 
     for (const job of pendingJobs) {
-      // Double-check we don't already have this active
+      // Double-check we don't already have this active or starting
       const cacheKey = this.getCacheKey(job.ratingKey, job.resolutionId);
-      if (this.activeTranscodes.has(cacheKey)) {
+      if (this.activeTranscodes.has(cacheKey) || this.startingTranscodes.has(cacheKey)) {
         continue;
       }
+
+      // Reserve the slot before async work begins
+      this.startingTranscodes.add(cacheKey);
 
       // Start this transcode
       this.startTranscode(job);
@@ -665,7 +691,8 @@ class TranscodeManager {
         stdio: ['pipe', 'pipe', 'pipe']
       });
 
-      // Track this as active
+      // Track this as active (move from starting to active)
+      this.startingTranscodes.delete(cacheKey);
       const activeTranscode: ActiveTranscode = {
         jobId: job.id,
         ffmpegProcess: ffmpeg,
@@ -722,6 +749,7 @@ class TranscodeManager {
       });
 
     } catch (error: any) {
+      this.startingTranscodes.delete(cacheKey);
       cleanupTempFile();
       logger.error('Failed to start transcode', {
         jobId: job.id,
@@ -853,6 +881,7 @@ class TranscodeManager {
     }
 
     this.activeTranscodes.clear();
+    this.startingTranscodes.clear();
   }
 
   // Legacy compatibility methods for existing code
