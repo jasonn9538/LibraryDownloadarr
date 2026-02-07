@@ -7,6 +7,8 @@ import { MediaItem } from '../types';
 import { useDownloads } from '../contexts/DownloadContext';
 import { useMobileMenu } from '../hooks/useMobileMenu';
 import { ResolutionSelector, ResolutionOption } from '../components/ResolutionSelector';
+import { BatchTranscodeBar } from '../components/BatchTranscodeBar';
+import { useAuthStore } from '../stores/authStore';
 
 export const MediaDetail: React.FC = () => {
   const { ratingKey } = useParams<{ ratingKey: string }>();
@@ -21,6 +23,13 @@ export const MediaDetail: React.FC = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
   const [transcodeQueued, setTranscodeQueued] = useState<string | null>(null);
+
+  const { user } = useAuthStore();
+
+  // Episode selection mode state
+  const [isEpisodeSelectionMode, setIsEpisodeSelectionMode] = useState(false);
+  const [selectedEpisodes, setSelectedEpisodes] = useState<Set<string>>(new Set());
+  const [batchToast, setBatchToast] = useState<{ successCount: number; totalCount: number } | null>(null);
 
   // State for resolution selector
   const [resolutionSelectorOpen, setResolutionSelectorOpen] = useState<string | null>(null);
@@ -85,6 +94,38 @@ export const MediaDetail: React.FC = () => {
         console.error('Failed to load episodes:', err);
       }
     }
+  };
+
+  const toggleEpisodeSelectionMode = () => {
+    setIsEpisodeSelectionMode((prev) => !prev);
+    setSelectedEpisodes(new Set());
+  };
+
+  const toggleEpisodeSelection = (episodeRatingKey: string) => {
+    setSelectedEpisodes((prev) => {
+      const next = new Set(prev);
+      if (next.has(episodeRatingKey)) next.delete(episodeRatingKey);
+      else next.add(episodeRatingKey);
+      return next;
+    });
+  };
+
+  const selectAllEpisodesInSeason = (seasonRatingKey: string) => {
+    const episodes = episodesBySeason[seasonRatingKey];
+    if (!episodes) return;
+    setSelectedEpisodes((prev) => {
+      const next = new Set(prev);
+      episodes.forEach((ep) => next.add(ep.ratingKey));
+      return next;
+    });
+  };
+
+  const handleEpisodeBatchSuccess = (successCount: number, totalCount: number) => {
+    setBatchToast({ successCount, totalCount });
+    setSelectedEpisodes(new Set());
+    setIsEpisodeSelectionMode(false);
+    setTimeout(() => setBatchToast(null), 5000);
+    setTimeout(() => navigate('/transcodes'), 1000);
   };
 
   // Helper to get or create a ref for a download button
@@ -412,15 +453,60 @@ export const MediaDetail: React.FC = () => {
                       // Season (clicked directly) - Show episodes with quality selection
                       episodesBySeason[ratingKey] && episodesBySeason[ratingKey].length > 0 ? (
                         <div className="space-y-2">
+                          {/* Select Episodes button for admins (season view) */}
+                          {user?.isAdmin && (
+                            <div className="flex items-center gap-2 mb-3">
+                              <button
+                                onClick={toggleEpisodeSelectionMode}
+                                className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+                                  isEpisodeSelectionMode
+                                    ? 'bg-primary-500 text-white'
+                                    : 'bg-dark-100 border border-dark-50 text-gray-300 hover:bg-dark-200'
+                                }`}
+                              >
+                                {isEpisodeSelectionMode ? 'Cancel' : 'Select Episodes'}
+                              </button>
+                              {isEpisodeSelectionMode && (
+                                <button
+                                  onClick={() => selectAllEpisodesInSeason(ratingKey)}
+                                  className="px-3 py-2 bg-dark-100 border border-dark-50 text-gray-300 hover:bg-dark-200 rounded-lg text-sm"
+                                >
+                                  Select All
+                                </button>
+                              )}
+                              {isEpisodeSelectionMode && selectedEpisodes.size > 0 && (
+                                <span className="text-sm text-gray-400">
+                                  {selectedEpisodes.size} selected
+                                </span>
+                              )}
+                            </div>
+                          )}
                           {episodesBySeason[ratingKey].map((episode: MediaItem) => {
                             const buttonKey = `season-ep-${episode.ratingKey}`;
                             const buttonRef = getButtonRef(buttonKey);
                             return (
                               <div
                                 key={episode.ratingKey}
-                                className="card p-3 md:p-4 flex flex-col md:flex-row items-start md:items-center justify-between gap-2 md:gap-0"
+                                onClick={isEpisodeSelectionMode ? () => toggleEpisodeSelection(episode.ratingKey) : undefined}
+                                className={`card p-3 md:p-4 flex flex-col md:flex-row items-start md:items-center justify-between gap-2 md:gap-0 ${
+                                  isEpisodeSelectionMode ? 'cursor-pointer' : ''
+                                } ${selectedEpisodes.has(episode.ratingKey) ? 'ring-2 ring-primary-500' : ''}`}
                               >
                                 <div className="flex items-center space-x-3">
+                                  {/* Selection checkbox */}
+                                  {isEpisodeSelectionMode && (
+                                    <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center flex-shrink-0 transition-all ${
+                                      selectedEpisodes.has(episode.ratingKey)
+                                        ? 'bg-primary-500 border-primary-500'
+                                        : 'bg-dark-100/80 border-gray-400 hover:border-primary-500'
+                                    }`}>
+                                      {selectedEpisodes.has(episode.ratingKey) && (
+                                        <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                                        </svg>
+                                      )}
+                                    </div>
+                                  )}
                                   {episode.thumb && (
                                     <img
                                       src={api.getThumbnailUrl(episode.ratingKey, episode.thumb)}
@@ -438,7 +524,7 @@ export const MediaDetail: React.FC = () => {
                                     </div>
                                   </div>
                                 </div>
-                                {episode.Media?.[0]?.Part?.[0] && (
+                                {!isEpisodeSelectionMode && episode.Media?.[0]?.Part?.[0] && (
                                   <div className="flex flex-col items-end gap-2 relative">
                                     <button
                                       ref={buttonRef}
@@ -481,6 +567,26 @@ export const MediaDetail: React.FC = () => {
                       // TV Show - Show seasons and episodes
                       seasons.length > 0 ? (
                         <div className="space-y-4">
+                          {/* Select Episodes button for admins */}
+                          {user?.isAdmin && (
+                            <div className="flex items-center gap-2">
+                              <button
+                                onClick={toggleEpisodeSelectionMode}
+                                className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+                                  isEpisodeSelectionMode
+                                    ? 'bg-primary-500 text-white'
+                                    : 'bg-dark-100 border border-dark-50 text-gray-300 hover:bg-dark-200'
+                                }`}
+                              >
+                                {isEpisodeSelectionMode ? 'Cancel' : 'Select Episodes'}
+                              </button>
+                              {isEpisodeSelectionMode && selectedEpisodes.size > 0 && (
+                                <span className="text-sm text-gray-400">
+                                  {selectedEpisodes.size} selected
+                                </span>
+                              )}
+                            </div>
+                          )}
                           {seasons.map((season) => (
                             <div key={season.ratingKey} className="card">
                               <button
@@ -509,6 +615,15 @@ export const MediaDetail: React.FC = () => {
 
                               {expandedSeasons[season.ratingKey] && (
                                 <div className="border-t border-dark-50 p-3 md:p-4 space-y-2">
+                                  {/* Per-season Select All button */}
+                                  {isEpisodeSelectionMode && episodesBySeason[season.ratingKey] && (
+                                    <button
+                                      onClick={() => selectAllEpisodesInSeason(season.ratingKey)}
+                                      className="px-3 py-1.5 bg-dark-200 border border-dark-50 text-gray-300 hover:bg-dark-100 rounded-lg text-xs"
+                                    >
+                                      Select All in {season.title}
+                                    </button>
+                                  )}
                                   {episodesBySeason[season.ratingKey] ? (
                                     episodesBySeason[season.ratingKey].map((episode) => {
                                       const buttonKey = `show-ep-${episode.ratingKey}`;
@@ -516,9 +631,26 @@ export const MediaDetail: React.FC = () => {
                                       return (
                                         <div
                                           key={episode.ratingKey}
-                                          className="card p-3 md:p-4 flex flex-col md:flex-row items-start md:items-center justify-between gap-2 md:gap-0"
+                                          onClick={isEpisodeSelectionMode ? () => toggleEpisodeSelection(episode.ratingKey) : undefined}
+                                          className={`card p-3 md:p-4 flex flex-col md:flex-row items-start md:items-center justify-between gap-2 md:gap-0 ${
+                                            isEpisodeSelectionMode ? 'cursor-pointer' : ''
+                                          } ${selectedEpisodes.has(episode.ratingKey) ? 'ring-2 ring-primary-500' : ''}`}
                                         >
                                           <div className="flex items-center space-x-3">
+                                            {/* Selection checkbox */}
+                                            {isEpisodeSelectionMode && (
+                                              <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center flex-shrink-0 transition-all ${
+                                                selectedEpisodes.has(episode.ratingKey)
+                                                  ? 'bg-primary-500 border-primary-500'
+                                                  : 'bg-dark-100/80 border-gray-400 hover:border-primary-500'
+                                              }`}>
+                                                {selectedEpisodes.has(episode.ratingKey) && (
+                                                  <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                                                  </svg>
+                                                )}
+                                              </div>
+                                            )}
                                             {episode.thumb && (
                                               <img
                                                 src={api.getThumbnailUrl(episode.ratingKey, episode.thumb)}
@@ -536,7 +668,7 @@ export const MediaDetail: React.FC = () => {
                                               </div>
                                             </div>
                                           </div>
-                                          {episode.Media?.[0]?.Part?.[0] && (
+                                          {!isEpisodeSelectionMode && episode.Media?.[0]?.Part?.[0] && (
                                             <div className="flex flex-col items-end gap-2 relative">
                                               <button
                                                 ref={buttonRef}
@@ -665,6 +797,26 @@ export const MediaDetail: React.FC = () => {
               </div>
             </div>
           </div>
+
+          {/* Batch transcode bar for episode selection */}
+          {isEpisodeSelectionMode && selectedEpisodes.size > 0 && (
+            <BatchTranscodeBar
+              selectedCount={selectedEpisodes.size}
+              selectedRatingKeys={Array.from(selectedEpisodes)}
+              onCancel={toggleEpisodeSelectionMode}
+              onSuccess={handleEpisodeBatchSuccess}
+            />
+          )}
+
+          {/* Batch success toast */}
+          {batchToast && (
+            <div className="fixed top-20 left-1/2 transform -translate-x-1/2 z-50 bg-green-600/90 text-white px-6 py-3 rounded-lg shadow-lg">
+              <div className="font-medium">
+                {batchToast.successCount} of {batchToast.totalCount} transcodes queued
+              </div>
+              <div className="text-sm text-green-100">Redirecting to Transcodes page...</div>
+            </div>
+          )}
         </main>
       </div>
     </div>

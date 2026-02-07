@@ -9,6 +9,9 @@ interface MediaGridProps {
   isLoadingMore?: boolean;
   hasMore?: boolean;
   onLoadMore?: () => void;
+  isSelectionMode?: boolean;
+  selectedItems?: Set<string>;
+  onToggleSelect?: (ratingKey: string) => void;
 }
 
 export const MediaGrid: React.FC<MediaGridProps> = ({
@@ -17,6 +20,9 @@ export const MediaGrid: React.FC<MediaGridProps> = ({
   isLoadingMore,
   hasMore,
   onLoadMore,
+  isSelectionMode = false,
+  selectedItems,
+  onToggleSelect,
 }) => {
   const navigate = useNavigate();
   const sentinelRef = useRef<HTMLDivElement>(null);
@@ -65,6 +71,9 @@ export const MediaGrid: React.FC<MediaGridProps> = ({
             key={item.ratingKey}
             media={item}
             onClick={() => navigate(`/media/${item.ratingKey}`)}
+            isSelectionMode={isSelectionMode}
+            isSelected={selectedItems?.has(item.ratingKey) ?? false}
+            onToggleSelect={() => onToggleSelect?.(item.ratingKey)}
           />
         ))}
       </div>

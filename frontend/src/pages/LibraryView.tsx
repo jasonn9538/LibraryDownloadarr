@@ -1,11 +1,13 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router-dom';
 import { Header } from '../components/Header';
 import { Sidebar } from '../components/Sidebar';
 import { MediaGrid } from '../components/MediaGrid';
+import { BatchTranscodeBar } from '../components/BatchTranscodeBar';
 import { api } from '../services/api';
 import { MediaItem, Library } from '../types';
 import { useMobileMenu } from '../hooks/useMobileMenu';
+import { useAuthStore } from '../stores/authStore';
 
 interface SortOption {
   value: string;
@@ -39,6 +41,13 @@ export const LibraryView: React.FC = () => {
   const [viewType, setViewType] = useState<string | undefined>(undefined);
   const [currentLibrary, setCurrentLibrary] = useState<Library | null>(null);
   const { isMobileMenuOpen, toggleMobileMenu, closeMobileMenu } = useMobileMenu();
+  const { user } = useAuthStore();
+  const navigate = useNavigate();
+
+  // Selection mode state
+  const [isSelectionMode, setIsSelectionMode] = useState(false);
+  const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
+  const [batchToast, setBatchToast] = useState<{ successCount: number; totalCount: number } | null>(null);
 
   const currentSort = SORT_OPTIONS[sortIndex];
 
@@ -113,8 +122,35 @@ export const LibraryView: React.FC = () => {
     }
   }, [libraryKey, isLoadingMore, hasMore, offset, viewType, currentSort]);
 
+  const toggleSelectionMode = () => {
+    setIsSelectionMode((prev) => !prev);
+    setSelectedItems(new Set());
+  };
+
+  const toggleItemSelection = (ratingKey: string) => {
+    setSelectedItems((prev) => {
+      const next = new Set(prev);
+      if (next.has(ratingKey)) next.delete(ratingKey);
+      else next.add(ratingKey);
+      return next;
+    });
+  };
+
+  const selectAll = () => {
+    setSelectedItems(new Set(media.map((item) => item.ratingKey)));
+  };
+
+  const handleBatchSuccess = (successCount: number, totalCount: number) => {
+    setBatchToast({ successCount, totalCount });
+    setSelectedItems(new Set());
+    setIsSelectionMode(false);
+    setTimeout(() => setBatchToast(null), 5000);
+    setTimeout(() => navigate('/transcodes'), 1000);
+  };
+
   const handleSortChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     setSortIndex(parseInt(e.target.value, 10));
+    setSelectedItems(new Set());
   };
 
   return (
@@ -145,6 +181,27 @@ export const LibraryView: React.FC = () => {
             </div>
 
             <div className="flex items-center gap-2">
+              {/* Selection mode toggle (admin only, movie/show libraries) */}
+              {user?.isAdmin && currentLibrary && (currentLibrary.type === 'movie' || currentLibrary.type === 'show') && (
+                <button
+                  onClick={toggleSelectionMode}
+                  className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+                    isSelectionMode
+                      ? 'bg-primary-500 text-white'
+                      : 'bg-dark-100 border border-dark-50 text-gray-300 hover:bg-dark-200'
+                  }`}
+                >
+                  {isSelectionMode ? 'Cancel' : 'Select'}
+                </button>
+              )}
+              {isSelectionMode && (
+                <button
+                  onClick={selectAll}
+                  className="px-3 py-2 bg-dark-100 border border-dark-50 text-gray-300 hover:bg-dark-200 rounded-lg text-sm"
+                >
+                  Select All
+                </button>
+              )}
               <label htmlFor="sort-select" className="text-sm text-gray-400">
                 Sort by:
               </label>
@@ -169,7 +226,30 @@ export const LibraryView: React.FC = () => {
             isLoadingMore={isLoadingMore}
             hasMore={hasMore}
             onLoadMore={loadMore}
+            isSelectionMode={isSelectionMode}
+            selectedItems={selectedItems}
+            onToggleSelect={toggleItemSelection}
           />
+
+          {/* Batch transcode bar */}
+          {isSelectionMode && selectedItems.size > 0 && (
+            <BatchTranscodeBar
+              selectedCount={selectedItems.size}
+              selectedRatingKeys={Array.from(selectedItems)}
+              onCancel={toggleSelectionMode}
+              onSuccess={handleBatchSuccess}
+            />
+          )}
+
+          {/* Batch success toast */}
+          {batchToast && (
+            <div className="fixed top-20 left-1/2 transform -translate-x-1/2 z-50 bg-green-600/90 text-white px-6 py-3 rounded-lg shadow-lg">
+              <div className="font-medium">
+                {batchToast.successCount} of {batchToast.totalCount} transcodes queued
+              </div>
+              <div className="text-sm text-green-100">Redirecting to Transcodes page...</div>
+            </div>
+          )}
         </main>
       </div>
     </div>

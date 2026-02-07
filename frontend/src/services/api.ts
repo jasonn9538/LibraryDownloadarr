@@ -330,6 +330,15 @@ class ApiClient {
     return response.data.job;
   }
 
+  async queueBatchTranscode(ratingKeys: string[], resolutionId: string): Promise<{
+    results: Array<{ ratingKey: string; success: boolean; jobId?: string; error?: string }>;
+    successCount: number;
+    totalCount: number;
+  }> {
+    const response = await this.client.post('/transcodes/batch', { ratingKeys, resolutionId });
+    return response.data;
+  }
+
   async cancelTranscode(jobId: string): Promise<void> {
     await this.client.delete(`/transcodes/${jobId}`);
   }

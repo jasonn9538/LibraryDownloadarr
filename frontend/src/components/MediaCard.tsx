@@ -5,9 +5,18 @@ import { api } from '../services/api';
 interface MediaCardProps {
   media: MediaItem;
   onClick: () => void;
+  isSelectionMode?: boolean;
+  isSelected?: boolean;
+  onToggleSelect?: () => void;
 }
 
-export const MediaCard: React.FC<MediaCardProps> = ({ media, onClick }) => {
+export const MediaCard: React.FC<MediaCardProps> = ({
+  media,
+  onClick,
+  isSelectionMode = false,
+  isSelected = false,
+  onToggleSelect,
+}) => {
   const thumbnailUrl = media.thumb ? api.getThumbnailUrl(media.ratingKey, media.thumb) : null;
 
   // Format display info based on media type
@@ -49,12 +58,38 @@ export const MediaCard: React.FC<MediaCardProps> = ({ media, onClick }) => {
 
   const { title, subtitle, meta } = getDisplayInfo();
 
+  const handleClick = () => {
+    if (isSelectionMode && onToggleSelect) {
+      onToggleSelect();
+    } else {
+      onClick();
+    }
+  };
+
   return (
     <div
-      onClick={onClick}
-      className="card cursor-pointer transition-all duration-300 hover:scale-105 hover:shadow-2xl group"
+      onClick={handleClick}
+      className={`card cursor-pointer transition-all duration-300 hover:scale-105 hover:shadow-2xl group ${
+        isSelected ? 'ring-2 ring-primary-500' : ''
+      }`}
     >
       <div className="relative aspect-[2/3] bg-dark-200">
+        {/* Selection checkbox */}
+        {isSelectionMode && (
+          <div className="absolute top-2 right-2 z-10">
+            <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center transition-all ${
+              isSelected
+                ? 'bg-primary-500 border-primary-500'
+                : 'bg-dark-100/80 border-gray-400 hover:border-primary-500'
+            }`}>
+              {isSelected && (
+                <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                </svg>
+              )}
+            </div>
+          </div>
+        )}
         {thumbnailUrl ? (
           <img
             src={thumbnailUrl}

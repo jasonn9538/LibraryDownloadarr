@@ -215,6 +215,100 @@ export const createTranscodesRouter = (db: DatabaseService) => {
     }
   });
 
+  // Batch queue multiple transcode jobs (admin only)
+  router.post('/batch', authMiddleware, async (req: AuthRequest, res) => {
+    try {
+      if (!req.user?.isAdmin) {
+        return res.status(403).json({ error: 'Admin access required' });
+      }
+
+      const { ratingKeys, resolutionId } = req.body;
+
+      if (!Array.isArray(ratingKeys) || ratingKeys.length === 0) {
+        return res.status(400).json({ error: 'ratingKeys array is required' });
+      }
+      if (ratingKeys.length > 100) {
+        return res.status(400).json({ error: 'Maximum 100 items per batch' });
+      }
+      if (!resolutionId) {
+        return res.status(400).json({ error: 'resolutionId is required' });
+      }
+
+      const resolutionPreset = RESOLUTION_PRESETS.find(r => r.id === resolutionId);
+      if (!resolutionPreset) {
+        return res.status(400).json({ error: 'Invalid resolution preset' });
+      }
+
+      const { token, serverUrl, error } = getUserCredentials(req);
+      if (error) {
+        return res.status(403).json({ error });
+      }
+      if (!token || !serverUrl) {
+        return res.status(401).json({ error: 'Plex token required' });
+      }
+
+      const results: Array<{ ratingKey: string; success: boolean; jobId?: string; error?: string }> = [];
+
+      for (const ratingKey of ratingKeys) {
+        try {
+          plexService.setServerConnection(serverUrl, token);
+          const metadata = await plexService.getMediaMetadata(ratingKey, token);
+
+          const sourceMedia = metadata.Media?.[0];
+          if (!sourceMedia) {
+            results.push({ ratingKey, success: false, error: 'No media found' });
+            continue;
+          }
+
+          const sourceHeight = sourceMedia.height || 0;
+          if (resolutionPreset.height > sourceHeight) {
+            results.push({ ratingKey, success: false, error: `Source is only ${sourceHeight}p` });
+            continue;
+          }
+
+          const originalFilename = sourceMedia.Part?.[0]?.file.split('/').pop() || 'download';
+          const baseName = originalFilename.replace(/\.[^/.]+$/, '');
+          const filename = `${baseName}_${resolutionPreset.id}.mp4`;
+
+          let mediaTitle = metadata.title || 'Unknown';
+          if (metadata.type === 'episode') {
+            mediaTitle = `${metadata.grandparentTitle || 'Unknown Show'} - ${metadata.title}`;
+          }
+
+          const job = transcodeManager.queueTranscode(
+            req.user!.id,
+            ratingKey,
+            resolutionId,
+            resolutionPreset.label,
+            resolutionPreset.height,
+            resolutionPreset.maxVideoBitrate,
+            mediaTitle,
+            metadata.type || 'video',
+            filename
+          );
+
+          results.push({ ratingKey, success: true, jobId: job.id });
+        } catch (err: any) {
+          results.push({ ratingKey, success: false, error: err.message || 'Unknown error' });
+        }
+      }
+
+      const successCount = results.filter(r => r.success).length;
+      logger.info('Batch transcode queued', {
+        userId: req.user!.id,
+        totalRequested: ratingKeys.length,
+        successCount,
+        failureCount: results.length - successCount,
+        resolution: resolutionPreset.label,
+      });
+
+      return res.json({ results, successCount, totalCount: results.length });
+    } catch (error) {
+      logger.error('Failed to queue batch transcode', { error });
+      return res.status(500).json({ error: 'Failed to queue batch transcode' });
+    }
+  });
+
   // Cancel a transcode job
   router.delete('/:jobId', authMiddleware, async (req: AuthRequest, res) => {
     try {
