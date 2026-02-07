@@ -156,6 +156,11 @@ export const Transcodes: React.FC = () => {
                 by {job.username}
               </span>
             )}
+            {job.workerName && (
+              <span className="px-2 py-0.5 text-xs bg-purple-500/20 text-purple-400 rounded border border-purple-500/30">
+                Worker: {job.workerName}
+              </span>
+            )}
           </div>
           <div className="text-sm text-gray-400 mt-1 flex flex-wrap gap-x-4 gap-y-1">
             {job.status === 'completed' && (

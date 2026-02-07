@@ -1,0 +1,22 @@
+{
+  "name": "librarydownloadarr-worker",
+  "version": "1.0.0",
+  "description": "Distributed transcoding worker for LibraryDownloadarr",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "ts-node src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "axios": "^1.6.5",
+    "form-data": "^4.0.0",
+    "winston": "^3.11.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.6",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.3.3"
+  }
+}

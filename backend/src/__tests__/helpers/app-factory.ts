@@ -7,6 +7,7 @@ import { createSettingsRouter } from '../../routes/settings';
 import { createLogsRouter } from '../../routes/logs';
 import { createTranscodesRouter } from '../../routes/transcodes';
 import { createUsersRouter } from '../../routes/users';
+import { createWorkerRouter } from '../../routes/worker';
 
 /**
  * Create a fresh Express app + in-memory SQLite database for testing.
@@ -34,6 +35,7 @@ export function createTestApp() {
   app.use('/api/logs', createLogsRouter(db));
   app.use('/api/transcodes', createTranscodesRouter(db));
   app.use('/api/users', createUsersRouter(db));
+  app.use('/api/worker', createWorkerRouter(db));
 
   // Error handler
   app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {

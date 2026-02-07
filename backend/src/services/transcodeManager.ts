@@ -12,6 +12,7 @@ import { plexService } from './plexService';
 const CACHE_DIR = process.env.TRANSCODE_DIR || '/app/transcode';
 const CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 1 week
 const DEFAULT_MAX_CONCURRENT = parseInt(process.env.MAX_CONCURRENT_TRANSCODES || '2', 10);
+const STALE_WORKER_TIMEOUT_MS = 2 * 60 * 1000; // 2 minutes
 const HARDWARE_ENCODING = process.env.HARDWARE_ENCODING || 'auto'; // auto, vaapi, qsv, software
 
 // SECURITY: Validate that a path is safe (no path traversal)
@@ -178,8 +179,17 @@ class TranscodeManager {
     if (!this.db) return;
 
     // Reset any "transcoding" jobs back to "pending" (server crashed mid-transcode)
+    // Skip worker-assigned jobs — stale detection will handle those
     const activeJobs = this.db.getActiveTranscodeJobs();
     for (const job of activeJobs) {
+      if (job.workerId) {
+        logger.info('Skipping worker-assigned job during recovery (stale detection will handle)', {
+          jobId: job.id,
+          workerId: job.workerId,
+        });
+        continue;
+      }
+
       logger.info('Recovering interrupted transcode job', { jobId: job.id, title: job.mediaTitle });
       this.db.updateTranscodeJobStatus(job.id, 'pending', { startedAt: undefined });
 
@@ -325,7 +335,15 @@ class TranscodeManager {
     const job = this.db.getTranscodeJob(jobId);
     if (!job) return false;
 
-    // Kill ffmpeg process if active
+    // If job is assigned to a worker, just mark as cancelled in DB
+    // Worker will discover on next progress report (server returns 410)
+    if (job.workerId && job.status === 'transcoding') {
+      this.db.updateTranscodeJobStatus(jobId, 'cancelled');
+      logger.info('Transcode job cancelled (worker will be notified)', { jobId, workerId: job.workerId });
+      return true;
+    }
+
+    // Kill ffmpeg process if active (local transcode)
     const cacheKey = this.getCacheKey(job.ratingKey, job.resolutionId);
     const active = this.activeTranscodes.get(cacheKey);
     if (active && active.jobId === jobId) {
@@ -423,6 +441,17 @@ class TranscodeManager {
    */
   private async processQueue(): Promise<void> {
     if (!this.db || !this.initialized) return;
+
+    // Check for stale worker jobs and re-queue them
+    const staleJobs = this.db.getStaleWorkerJobs(STALE_WORKER_TIMEOUT_MS);
+    for (const job of staleJobs) {
+      logger.warn('Re-queuing stale worker job', { jobId: job.id, workerId: job.workerId });
+      this.db.resetStaleWorkerJob(job.id);
+      // Mark the worker as offline
+      if (job.workerId) {
+        this.db.updateWorkerStatus(job.workerId, 'offline');
+      }
+    }
 
     // Check how many transcodes are currently active or starting
     const busyCount = this.activeTranscodes.size + this.startingTranscodes.size;
@@ -882,6 +911,23 @@ class TranscodeManager {
 
     this.activeTranscodes.clear();
     this.startingTranscodes.clear();
+  }
+
+  /**
+   * Handle a completed worker job (called by worker route when upload finishes)
+   */
+  handleWorkerJobComplete(jobId: string, outputPath: string, fileSize: number): void {
+    if (!this.db) return;
+
+    this.db.updateTranscodeJobStatus(jobId, 'completed', {
+      progress: 100,
+      outputPath,
+      fileSize,
+      completedAt: Date.now(),
+      expiresAt: Date.now() + CACHE_TTL_MS,
+    });
+
+    logger.info('Worker transcode completed', { jobId, outputPath, fileSize });
   }
 
   // Legacy compatibility methods for existing code

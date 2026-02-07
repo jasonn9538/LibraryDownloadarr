@@ -1,8 +1,8 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { Header } from '../components/Header';
 import { Sidebar } from '../components/Sidebar';
 import { api } from '../services/api';
-import { Settings as SettingsType, PathMapping } from '../types';
+import { Settings as SettingsType, PathMapping, WorkerInfo } from '../types';
 import { useMobileMenu } from '../hooks/useMobileMenu';
 
 export const Settings: React.FC = () => {
@@ -35,9 +35,27 @@ export const Settings: React.FC = () => {
   const [isChangingPassword, setIsChangingPassword] = useState(false);
   const [passwordMessage, setPasswordMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
+  // Workers state
+  const [workers, setWorkers] = useState<WorkerInfo[]>([]);
+  const [hasWorkerKey, setHasWorkerKey] = useState(false);
+  const [workerKey, setWorkerKey] = useState<string | null>(null);
+  const [isGeneratingKey, setIsGeneratingKey] = useState(false);
+  const [workerMessage, setWorkerMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  const loadWorkers = useCallback(async () => {
+    try {
+      const data = await api.getWorkers();
+      setWorkers(data.workers);
+      setHasWorkerKey(data.hasWorkerKey);
+    } catch {
+      // Workers endpoint may not be accessible for non-admin users
+    }
+  }, []);
+
   useEffect(() => {
     loadSettings();
-  }, []);
+    loadWorkers();
+  }, [loadWorkers]);
 
   const loadSettings = async () => {
     try {
@@ -205,6 +223,47 @@ export const Settings: React.FC = () => {
     } finally {
       setIsSavingTranscoding(false);
     }
+  };
+
+  const handleGenerateWorkerKey = async () => {
+    if (hasWorkerKey && !confirm('This will invalidate the existing worker API key. All connected workers will need to be reconfigured. Continue?')) {
+      return;
+    }
+    setIsGeneratingKey(true);
+    setWorkerMessage(null);
+    try {
+      const key = await api.generateWorkerKey();
+      setWorkerKey(key);
+      setHasWorkerKey(true);
+      setWorkerMessage({ type: 'success', text: 'Worker API key generated. Copy it now — it won\'t be shown again.' });
+    } catch (err: any) {
+      setWorkerMessage({ type: 'error', text: err.response?.data?.error || 'Failed to generate key' });
+    } finally {
+      setIsGeneratingKey(false);
+    }
+  };
+
+  const handleRemoveWorker = async (workerId: string, workerName: string) => {
+    if (!confirm(`Remove worker "${workerName}"?`)) return;
+    try {
+      await api.deleteWorker(workerId);
+      setWorkerMessage({ type: 'success', text: `Worker "${workerName}" removed` });
+      loadWorkers();
+    } catch (err: any) {
+      setWorkerMessage({ type: 'error', text: err.response?.data?.error || 'Failed to remove worker' });
+    }
+  };
+
+  const formatTimeAgo = (timestamp?: number): string => {
+    if (!timestamp) return 'Never';
+    const seconds = Math.floor((Date.now() - timestamp) / 1000);
+    if (seconds < 60) return `${seconds}s ago`;
+    const minutes = Math.floor(seconds / 60);
+    if (minutes < 60) return `${minutes}m ago`;
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return `${hours}h ago`;
+    const days = Math.floor(hours / 24);
+    return `${days}d ago`;
   };
 
   if (isLoading) {
@@ -401,9 +460,9 @@ export const Settings: React.FC = () => {
             </div>
 
             <div className="card p-4 md:p-6 mt-4 md:mt-6">
-              <h2 className="text-xl md:text-2xl font-semibold mb-2">Transcoding</h2>
+              <h2 className="text-xl md:text-2xl font-semibold mb-2">Local Transcoding</h2>
               <p className="text-xs md:text-sm text-gray-500 mb-4">
-                Configure transcoding behavior. Changes take effect immediately.
+                Configure how many transcodes run on this server. Workers have their own limits set via the MAX_CONCURRENT environment variable.
               </p>
 
               <div className="space-y-3">
@@ -440,6 +499,113 @@ export const Settings: React.FC = () => {
                     }`}
                   >
                     {transcodingMessage.text}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="card p-4 md:p-6 mt-4 md:mt-6">
+              <h2 className="text-xl md:text-2xl font-semibold mb-2">Distributed Workers</h2>
+              <p className="text-xs md:text-sm text-gray-500 mb-4">
+                Offload transcoding to remote machines. Workers connect to this server and claim pending transcode jobs.
+              </p>
+
+              <div className="space-y-4">
+                {/* Worker API Key */}
+                <div>
+                  <label className="block text-sm md:text-base font-medium mb-2">Worker API Key</label>
+                  {workerKey && (
+                    <div className="flex gap-2 mb-2">
+                      <input
+                        type="text"
+                        className="input text-sm font-mono flex-1"
+                        value={workerKey}
+                        readOnly
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          navigator.clipboard.writeText(workerKey);
+                          setWorkerMessage({ type: 'success', text: 'Key copied to clipboard' });
+                        }}
+                        className="btn-secondary text-sm px-3"
+                      >
+                        Copy
+                      </button>
+                    </div>
+                  )}
+                  <button
+                    type="button"
+                    onClick={handleGenerateWorkerKey}
+                    disabled={isGeneratingKey}
+                    className="btn-primary text-sm"
+                  >
+                    {isGeneratingKey ? 'Generating...' : hasWorkerKey ? 'Regenerate Key' : 'Generate Key'}
+                  </button>
+                  <p className="text-xs text-gray-500 mt-1">
+                    {hasWorkerKey
+                      ? 'A worker API key is configured. Regenerating will invalidate the existing key.'
+                      : 'Generate a key to allow workers to connect to this server.'}
+                  </p>
+                </div>
+
+                {/* Connected Workers Table */}
+                {workers.length > 0 && (
+                  <div>
+                    <label className="block text-sm md:text-base font-medium mb-2">Connected Workers</label>
+                    <div className="space-y-2">
+                      {workers.map(worker => {
+                        let caps: { gpu?: string; encoders?: string[]; maxConcurrent?: number; os?: string } = {};
+                        try {
+                          if (worker.capabilities) caps = JSON.parse(worker.capabilities);
+                        } catch { /* ignore */ }
+
+                        return (
+                          <div key={worker.id} className="flex items-center justify-between p-3 bg-dark-200 rounded-lg">
+                            <div className="flex items-center gap-3">
+                              <span className={`w-2.5 h-2.5 rounded-full ${worker.status === 'online' ? 'bg-green-400' : 'bg-red-400'}`} />
+                              <div>
+                                <div className="text-sm font-medium text-white">{worker.name}</div>
+                                <div className="text-xs text-gray-400 flex flex-wrap gap-x-3 gap-y-0.5">
+                                  {caps.gpu && <span>GPU: {caps.gpu}</span>}
+                                  {caps.encoders && caps.encoders.length > 0 && (
+                                    <span>Encoders: {caps.encoders.join(', ')}</span>
+                                  )}
+                                  {caps.maxConcurrent && <span>Max: {caps.maxConcurrent}</span>}
+                                  <span>Active: {worker.activeJobs}</span>
+                                  <span>Last seen: {formatTimeAgo(worker.lastHeartbeat)}</span>
+                                </div>
+                              </div>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveWorker(worker.id, worker.name)}
+                              className="text-red-400 hover:text-red-300 text-sm px-2"
+                            >
+                              Remove
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {workers.length === 0 && hasWorkerKey && (
+                  <div className="text-center py-4 text-gray-500 text-sm">
+                    No workers connected. Deploy a worker container with the API key above.
+                  </div>
+                )}
+
+                {workerMessage && (
+                  <div
+                    className={`px-4 py-3 rounded-lg text-xs md:text-sm ${
+                      workerMessage.type === 'success'
+                        ? 'bg-green-500/10 border border-green-500/20 text-green-400'
+                        : 'bg-red-500/10 border border-red-500/20 text-red-400'
+                    }`}
+                  >
+                    {workerMessage.text}
                   </div>
                 )}
               </div>

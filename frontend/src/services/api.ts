@@ -6,6 +6,7 @@ import {
   MediaItem,
   PlexPin,
   Settings,
+  WorkerInfo,
 } from '../types';
 
 class ApiClient {
@@ -360,6 +361,21 @@ class ApiClient {
   async deleteUser(userId: string): Promise<void> {
     await this.client.delete(`/users/${userId}`);
   }
+
+  // Worker management endpoints (admin only)
+  async getWorkers(): Promise<{ workers: WorkerInfo[]; hasWorkerKey: boolean }> {
+    const response = await this.client.get<{ workers: WorkerInfo[]; hasWorkerKey: boolean }>('/settings/workers');
+    return response.data;
+  }
+
+  async deleteWorker(workerId: string): Promise<void> {
+    await this.client.delete(`/settings/workers/${workerId}`);
+  }
+
+  async generateWorkerKey(): Promise<string> {
+    const response = await this.client.post<{ key: string }>('/settings/workers/generate-key');
+    return response.data.key;
+  }
 }
 
 // User info type for user management
@@ -394,6 +410,8 @@ export interface TranscodeJob {
   startedAt?: number;
   completedAt?: number;
   expiresAt?: number;
+  workerId?: string;
+  workerName?: string;
   username?: string;
 }
 

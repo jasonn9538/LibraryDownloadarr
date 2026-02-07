@@ -82,3 +82,13 @@ export interface Settings {
   pathMappings?: PathMapping[];
   maxConcurrentTranscodes?: number;
 }
+
+export interface WorkerInfo {
+  id: string;
+  name: string;
+  capabilities?: string;
+  lastHeartbeat?: number;
+  status: 'online' | 'offline';
+  activeJobs: number;
+  createdAt: number;
+}

@@ -1,0 +1,24 @@
+# Example docker-compose for deploying a worker on a Windows desktop with NVIDIA GPU
+# Adjust SERVER_URL to point to your LibraryDownloadarr server
+# Paste the WORKER_KEY from Settings > Distributed Workers > Worker API Key
+services:
+  worker:
+    image: ghcr.io/jasonn9538/librarydownloadarr-worker:latest
+    environment:
+      SERVER_URL: http://192.168.1.100:5069
+      WORKER_KEY: paste-your-worker-key-here
+      WORKER_NAME: desktop-nvidia
+      MAX_CONCURRENT: 2
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    restart: unless-stopped
+    volumes:
+      - worker-temp:/tmp/transcode
+
+volumes:
+  worker-temp:

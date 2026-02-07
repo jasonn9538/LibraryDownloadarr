@@ -393,4 +393,196 @@ describe('DatabaseService', () => {
       expect(log[0].action).toBe('login_success');
     });
   });
+
+  describe('Worker operations', () => {
+    it('creates and retrieves a worker', () => {
+      const worker = db.createWorker({
+        id: 'worker-1',
+        name: 'test-worker',
+        capabilities: JSON.stringify({ gpu: 'NVIDIA', encoders: ['h264_nvenc'] }),
+      });
+
+      expect(worker.id).toBe('worker-1');
+      expect(worker.name).toBe('test-worker');
+      expect(worker.status).toBe('online');
+
+      const found = db.getWorker('worker-1');
+      expect(found).toBeDefined();
+      expect(found!.name).toBe('test-worker');
+    });
+
+    it('lists all workers', () => {
+      db.createWorker({ id: 'w1', name: 'worker-1' });
+      db.createWorker({ id: 'w2', name: 'worker-2' });
+
+      const workers = db.getWorkers();
+      expect(workers).toHaveLength(2);
+    });
+
+    it('deletes a worker', () => {
+      db.createWorker({ id: 'w1', name: 'worker-1' });
+      expect(db.deleteWorker('w1')).toBe(true);
+      expect(db.getWorker('w1')).toBeUndefined();
+    });
+
+    it('returns false when deleting non-existent worker', () => {
+      expect(db.deleteWorker('nonexistent')).toBe(false);
+    });
+
+    it('updates worker heartbeat', () => {
+      db.createWorker({ id: 'w1', name: 'worker-1' });
+      db.updateWorkerHeartbeat('w1', 3);
+
+      const worker = db.getWorker('w1');
+      expect(worker!.activeJobs).toBe(3);
+      expect(worker!.status).toBe('online');
+      expect(worker!.lastHeartbeat).toBeGreaterThan(0);
+    });
+
+    it('updates worker status', () => {
+      db.createWorker({ id: 'w1', name: 'worker-1' });
+      db.updateWorkerStatus('w1', 'offline');
+
+      const worker = db.getWorker('w1');
+      expect(worker!.status).toBe('offline');
+    });
+
+    it('re-registers (upserts) an existing worker', () => {
+      db.createWorker({ id: 'w1', name: 'original' });
+      db.createWorker({ id: 'w1', name: 'updated' });
+
+      const workers = db.getWorkers();
+      expect(workers).toHaveLength(1);
+      expect(workers[0].name).toBe('updated');
+    });
+  });
+
+  describe('Worker job claim', () => {
+    it('atomically claims a pending job', () => {
+      // Create a transcode job
+      const user = db.createAdminUser({
+        username: 'admin', passwordHash: 'h', email: 'a@t.com', isAdmin: true,
+      });
+      db.createTranscodeJob({
+        userId: user.id, ratingKey: '123', resolutionId: '720p',
+        resolutionLabel: '720p', resolutionHeight: 720, maxBitrate: 4000,
+        mediaTitle: 'Test', mediaType: 'movie', filename: 'test.mp4',
+      });
+
+      db.createWorker({ id: 'w1', name: 'worker-1' });
+      const claimed = db.claimTranscodeJobForWorker('w1');
+
+      expect(claimed).toBeDefined();
+      expect(claimed!.status).toBe('transcoding');
+      expect(claimed!.workerId).toBe('w1');
+      expect(claimed!.assignedAt).toBeGreaterThan(0);
+    });
+
+    it('returns undefined when no pending jobs', () => {
+      db.createWorker({ id: 'w1', name: 'worker-1' });
+      const claimed = db.claimTranscodeJobForWorker('w1');
+      expect(claimed).toBeUndefined();
+    });
+
+    it('only one worker can claim the same job', () => {
+      const user = db.createAdminUser({
+        username: 'admin', passwordHash: 'h', email: 'a@t.com', isAdmin: true,
+      });
+      db.createTranscodeJob({
+        userId: user.id, ratingKey: '123', resolutionId: '720p',
+        resolutionLabel: '720p', resolutionHeight: 720, maxBitrate: 4000,
+        mediaTitle: 'Test', mediaType: 'movie', filename: 'test.mp4',
+      });
+
+      db.createWorker({ id: 'w1', name: 'worker-1' });
+      db.createWorker({ id: 'w2', name: 'worker-2' });
+
+      const claimed1 = db.claimTranscodeJobForWorker('w1');
+      const claimed2 = db.claimTranscodeJobForWorker('w2');
+
+      expect(claimed1).toBeDefined();
+      expect(claimed2).toBeUndefined();
+    });
+
+    it('excludes worker-claimed jobs from local pending queue', () => {
+      const user = db.createAdminUser({
+        username: 'admin', passwordHash: 'h', email: 'a@t.com', isAdmin: true,
+      });
+      db.createTranscodeJob({
+        userId: user.id, ratingKey: '123', resolutionId: '720p',
+        resolutionLabel: '720p', resolutionHeight: 720, maxBitrate: 4000,
+        mediaTitle: 'Test', mediaType: 'movie', filename: 'test.mp4',
+      });
+
+      db.createWorker({ id: 'w1', name: 'worker-1' });
+      db.claimTranscodeJobForWorker('w1');
+
+      // Local queue should not see the claimed job
+      const pending = db.getPendingTranscodeJobs();
+      expect(pending).toHaveLength(0);
+    });
+  });
+
+  describe('Stale worker job detection', () => {
+    it('detects stale worker jobs', () => {
+      const user = db.createAdminUser({
+        username: 'admin', passwordHash: 'h', email: 'a@t.com', isAdmin: true,
+      });
+      db.createTranscodeJob({
+        userId: user.id, ratingKey: '123', resolutionId: '720p',
+        resolutionLabel: '720p', resolutionHeight: 720, maxBitrate: 4000,
+        mediaTitle: 'Test', mediaType: 'movie', filename: 'test.mp4',
+      });
+
+      // Create worker with old heartbeat
+      db.createWorker({ id: 'w1', name: 'worker-1' });
+      db.claimTranscodeJobForWorker('w1');
+
+      // Manually set heartbeat to the past
+      const pastTime = Date.now() - 5 * 60 * 1000; // 5 minutes ago
+      db['db'].prepare('UPDATE workers SET last_heartbeat = ? WHERE id = ?').run(pastTime, 'w1');
+
+      const staleJobs = db.getStaleWorkerJobs(2 * 60 * 1000); // 2 min timeout
+      expect(staleJobs).toHaveLength(1);
+      expect(staleJobs[0].workerId).toBe('w1');
+    });
+
+    it('does not flag jobs with recent heartbeat', () => {
+      const user = db.createAdminUser({
+        username: 'admin', passwordHash: 'h', email: 'a@t.com', isAdmin: true,
+      });
+      db.createTranscodeJob({
+        userId: user.id, ratingKey: '123', resolutionId: '720p',
+        resolutionLabel: '720p', resolutionHeight: 720, maxBitrate: 4000,
+        mediaTitle: 'Test', mediaType: 'movie', filename: 'test.mp4',
+      });
+
+      db.createWorker({ id: 'w1', name: 'worker-1' });
+      db.claimTranscodeJobForWorker('w1');
+
+      const staleJobs = db.getStaleWorkerJobs(2 * 60 * 1000);
+      expect(staleJobs).toHaveLength(0);
+    });
+
+    it('resets stale worker job to pending', () => {
+      const user = db.createAdminUser({
+        username: 'admin', passwordHash: 'h', email: 'a@t.com', isAdmin: true,
+      });
+      const job = db.createTranscodeJob({
+        userId: user.id, ratingKey: '123', resolutionId: '720p',
+        resolutionLabel: '720p', resolutionHeight: 720, maxBitrate: 4000,
+        mediaTitle: 'Test', mediaType: 'movie', filename: 'test.mp4',
+      });
+
+      db.createWorker({ id: 'w1', name: 'worker-1' });
+      db.claimTranscodeJobForWorker('w1');
+      db.resetStaleWorkerJob(job.id);
+
+      const updated = db.getTranscodeJob(job.id);
+      expect(updated!.status).toBe('pending');
+      expect(updated!.workerId).toBeFalsy();
+      expect(updated!.assignedAt).toBeFalsy();
+      expect(updated!.progress).toBe(0);
+    });
+  });
 });

@@ -62,8 +62,21 @@ export interface TranscodeJob {
   startedAt?: number;
   completedAt?: number;
   expiresAt?: number;
+  workerId?: string;
+  assignedAt?: number;
   // Joined fields
   username?: string;
+  workerName?: string;
+}
+
+export interface Worker {
+  id: string;
+  name: string;
+  capabilities?: string;
+  lastHeartbeat?: number;
+  status: 'online' | 'offline';
+  activeJobs: number;
+  createdAt: number;
 }
 
 export class DatabaseService {
@@ -228,6 +241,30 @@ export class DatabaseService {
       CREATE INDEX IF NOT EXISTS idx_audit_log_user_id ON audit_log(user_id);
       CREATE INDEX IF NOT EXISTS idx_audit_log_action ON audit_log(action);
     `);
+
+    // Workers table (distributed transcoding)
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS workers (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        capabilities TEXT,
+        last_heartbeat INTEGER,
+        status TEXT DEFAULT 'offline',
+        active_jobs INTEGER DEFAULT 0,
+        created_at INTEGER NOT NULL
+      )
+    `);
+
+    // Migration: Add worker_id and assigned_at columns to transcode_jobs
+    const hasWorkerId = this.db.prepare(`
+      SELECT COUNT(*) as count FROM pragma_table_info('transcode_jobs') WHERE name='worker_id'
+    `).get() as { count: number };
+
+    if (hasWorkerId.count === 0) {
+      logger.info('Adding worker_id and assigned_at columns to transcode_jobs table');
+      this.db.exec('ALTER TABLE transcode_jobs ADD COLUMN worker_id TEXT');
+      this.db.exec('ALTER TABLE transcode_jobs ADD COLUMN assigned_at INTEGER');
+    }
 
     logger.info('Database tables initialized');
   }
@@ -472,10 +509,12 @@ export class DatabaseService {
   getTranscodeJob(id: string): TranscodeJob | undefined {
     const stmt = this.db.prepare(`
       SELECT tj.*,
-             COALESCE(au.username, pu.username) as username
+             COALESCE(au.username, pu.username) as username,
+             w.name as worker_name
       FROM transcode_jobs tj
       LEFT JOIN admin_users au ON tj.user_id = au.id
       LEFT JOIN plex_users pu ON tj.user_id = pu.id
+      LEFT JOIN workers w ON tj.worker_id = w.id
       WHERE tj.id = ?
     `);
     const row = stmt.get(id) as any;
@@ -486,10 +525,12 @@ export class DatabaseService {
     // Get most recent job for this cache key that's not cancelled/error
     const stmt = this.db.prepare(`
       SELECT tj.*,
-             COALESCE(au.username, pu.username) as username
+             COALESCE(au.username, pu.username) as username,
+             w.name as worker_name
       FROM transcode_jobs tj
       LEFT JOIN admin_users au ON tj.user_id = au.id
       LEFT JOIN plex_users pu ON tj.user_id = pu.id
+      LEFT JOIN workers w ON tj.worker_id = w.id
       WHERE tj.rating_key = ? AND tj.resolution_id = ?
         AND tj.status IN ('pending', 'transcoding', 'completed')
         AND (tj.expires_at IS NULL OR tj.expires_at > ?)
@@ -514,10 +555,12 @@ export class DatabaseService {
     // This handles cases where the same person logs in with different Plex managed users
     const stmt = this.db.prepare(`
       SELECT tj.*,
-             COALESCE(au.username, pu.username) as username
+             COALESCE(au.username, pu.username) as username,
+             w.name as worker_name
       FROM transcode_jobs tj
       LEFT JOIN admin_users au ON tj.user_id = au.id
       LEFT JOIN plex_users pu ON tj.user_id = pu.id
+      LEFT JOIN workers w ON tj.worker_id = w.id
       WHERE (tj.user_id = ? OR COALESCE(au.username, pu.username) = ?)
         AND (tj.expires_at IS NULL OR tj.expires_at > ? OR tj.status NOT IN ('completed', 'error', 'cancelled'))
       ORDER BY tj.created_at DESC
@@ -530,10 +573,12 @@ export class DatabaseService {
     // Get all completed transcodes that haven't expired (for the "all available" toggle)
     const stmt = this.db.prepare(`
       SELECT tj.*,
-             COALESCE(au.username, pu.username) as username
+             COALESCE(au.username, pu.username) as username,
+             w.name as worker_name
       FROM transcode_jobs tj
       LEFT JOIN admin_users au ON tj.user_id = au.id
       LEFT JOIN plex_users pu ON tj.user_id = pu.id
+      LEFT JOIN workers w ON tj.worker_id = w.id
       WHERE tj.status = 'completed'
         AND (tj.expires_at IS NULL OR tj.expires_at > ?)
       ORDER BY tj.created_at DESC
@@ -546,10 +591,12 @@ export class DatabaseService {
     // Get all transcodes (pending, transcoding, completed) that haven't expired
     const stmt = this.db.prepare(`
       SELECT tj.*,
-             COALESCE(au.username, pu.username) as username
+             COALESCE(au.username, pu.username) as username,
+             w.name as worker_name
       FROM transcode_jobs tj
       LEFT JOIN admin_users au ON tj.user_id = au.id
       LEFT JOIN plex_users pu ON tj.user_id = pu.id
+      LEFT JOIN workers w ON tj.worker_id = w.id
       WHERE tj.status IN ('pending', 'transcoding', 'completed')
         AND (tj.expires_at IS NULL OR tj.expires_at > ? OR tj.status NOT IN ('completed'))
       ORDER BY
@@ -568,10 +615,12 @@ export class DatabaseService {
     // Get all available transcodes (pending, transcoding, completed) for a specific media item
     const stmt = this.db.prepare(`
       SELECT tj.*,
-             COALESCE(au.username, pu.username) as username
+             COALESCE(au.username, pu.username) as username,
+             w.name as worker_name
       FROM transcode_jobs tj
       LEFT JOIN admin_users au ON tj.user_id = au.id
       LEFT JOIN plex_users pu ON tj.user_id = pu.id
+      LEFT JOIN workers w ON tj.worker_id = w.id
       WHERE tj.rating_key = ?
         AND tj.status IN ('pending', 'transcoding', 'completed')
         AND (tj.expires_at IS NULL OR tj.expires_at > ? OR tj.status NOT IN ('completed'))
@@ -584,11 +633,13 @@ export class DatabaseService {
   getPendingTranscodeJobs(limit: number = 10): TranscodeJob[] {
     const stmt = this.db.prepare(`
       SELECT tj.*,
-             COALESCE(au.username, pu.username) as username
+             COALESCE(au.username, pu.username) as username,
+             w.name as worker_name
       FROM transcode_jobs tj
       LEFT JOIN admin_users au ON tj.user_id = au.id
       LEFT JOIN plex_users pu ON tj.user_id = pu.id
-      WHERE tj.status = 'pending'
+      LEFT JOIN workers w ON tj.worker_id = w.id
+      WHERE tj.status = 'pending' AND tj.worker_id IS NULL
       ORDER BY tj.created_at ASC
       LIMIT ?
     `);
@@ -599,10 +650,12 @@ export class DatabaseService {
   getActiveTranscodeJobs(): TranscodeJob[] {
     const stmt = this.db.prepare(`
       SELECT tj.*,
-             COALESCE(au.username, pu.username) as username
+             COALESCE(au.username, pu.username) as username,
+             w.name as worker_name
       FROM transcode_jobs tj
       LEFT JOIN admin_users au ON tj.user_id = au.id
       LEFT JOIN plex_users pu ON tj.user_id = pu.id
+      LEFT JOIN workers w ON tj.worker_id = w.id
       WHERE tj.status = 'transcoding'
       ORDER BY tj.started_at ASC
     `);
@@ -740,7 +793,124 @@ export class DatabaseService {
       startedAt: row.started_at,
       completedAt: row.completed_at,
       expiresAt: row.expires_at,
+      workerId: row.worker_id,
+      assignedAt: row.assigned_at,
       username: row.username,
+      workerName: row.worker_name,
+    };
+  }
+
+  // Worker operations (distributed transcoding)
+  createWorker(worker: { id: string; name: string; capabilities?: string }): Worker {
+    const now = Date.now();
+    const stmt = this.db.prepare(`
+      INSERT INTO workers (id, name, capabilities, last_heartbeat, status, active_jobs, created_at)
+      VALUES (?, ?, ?, ?, 'online', 0, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        name = excluded.name,
+        capabilities = excluded.capabilities,
+        last_heartbeat = excluded.last_heartbeat,
+        status = 'online',
+        active_jobs = 0
+    `);
+    stmt.run(worker.id, worker.name, worker.capabilities || null, now, now);
+
+    return {
+      id: worker.id,
+      name: worker.name,
+      capabilities: worker.capabilities,
+      lastHeartbeat: now,
+      status: 'online',
+      activeJobs: 0,
+      createdAt: now,
+    };
+  }
+
+  getWorker(id: string): Worker | undefined {
+    const stmt = this.db.prepare('SELECT * FROM workers WHERE id = ?');
+    const row = stmt.get(id) as any;
+    return row ? this.mapWorker(row) : undefined;
+  }
+
+  getWorkers(): Worker[] {
+    const stmt = this.db.prepare('SELECT * FROM workers ORDER BY created_at ASC');
+    const rows = stmt.all() as any[];
+    return rows.map(row => this.mapWorker(row));
+  }
+
+  deleteWorker(id: string): boolean {
+    const stmt = this.db.prepare('DELETE FROM workers WHERE id = ?');
+    const result = stmt.run(id);
+    return result.changes > 0;
+  }
+
+  updateWorkerHeartbeat(id: string, activeJobs: number): void {
+    const stmt = this.db.prepare(`
+      UPDATE workers SET last_heartbeat = ?, status = 'online', active_jobs = ? WHERE id = ?
+    `);
+    stmt.run(Date.now(), activeJobs, id);
+  }
+
+  updateWorkerStatus(id: string, status: 'online' | 'offline'): void {
+    const stmt = this.db.prepare('UPDATE workers SET status = ? WHERE id = ?');
+    stmt.run(status, id);
+  }
+
+  claimTranscodeJobForWorker(workerId: string): TranscodeJob | undefined {
+    const now = Date.now();
+    const stmt = this.db.prepare(`
+      UPDATE transcode_jobs
+      SET status = 'transcoding', worker_id = ?, assigned_at = ?, started_at = ?
+      WHERE id = (
+        SELECT id FROM transcode_jobs
+        WHERE status = 'pending' AND worker_id IS NULL
+        ORDER BY created_at ASC LIMIT 1
+      )
+      RETURNING *
+    `);
+    const row = stmt.get(workerId, now, now) as any;
+    if (!row) return undefined;
+
+    // Fetch with joined username and worker name
+    return this.getTranscodeJob(row.id);
+  }
+
+  getStaleWorkerJobs(timeoutMs: number): TranscodeJob[] {
+    const cutoff = Date.now() - timeoutMs;
+    const stmt = this.db.prepare(`
+      SELECT tj.*,
+             COALESCE(au.username, pu.username) as username,
+             w.name as worker_name
+      FROM transcode_jobs tj
+      LEFT JOIN admin_users au ON tj.user_id = au.id
+      LEFT JOIN plex_users pu ON tj.user_id = pu.id
+      LEFT JOIN workers w ON tj.worker_id = w.id
+      WHERE tj.status = 'transcoding'
+        AND tj.worker_id IS NOT NULL
+        AND (w.last_heartbeat IS NULL OR w.last_heartbeat < ?)
+    `);
+    const rows = stmt.all(cutoff) as any[];
+    return rows.map(row => this.mapTranscodeJob(row));
+  }
+
+  resetStaleWorkerJob(jobId: string): void {
+    const stmt = this.db.prepare(`
+      UPDATE transcode_jobs
+      SET status = 'pending', worker_id = NULL, assigned_at = NULL, started_at = NULL, progress = 0
+      WHERE id = ?
+    `);
+    stmt.run(jobId);
+  }
+
+  private mapWorker(row: any): Worker {
+    return {
+      id: row.id,
+      name: row.name,
+      capabilities: row.capabilities,
+      lastHeartbeat: row.last_heartbeat,
+      status: row.status,
+      activeJobs: row.active_jobs,
+      createdAt: row.created_at,
     };
   }
 
