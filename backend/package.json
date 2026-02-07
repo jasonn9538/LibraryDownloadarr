@@ -8,7 +8,9 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "lint": "eslint src --ext .ts",
-    "format": "prettier --write \"src/**/*.ts\""
+    "format": "prettier --write \"src/**/*.ts\"",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "keywords": [
     "plex",
@@ -43,6 +45,7 @@
     "@types/express-session": "^1.17.10",
     "@types/jsonwebtoken": "^9.0.5",
     "@types/node": "^20.10.6",
+    "@types/supertest": "^6.0.3",
     "@types/uuid": "^9.0.7",
     "@types/xml2js": "^0.4.14",
     "@typescript-eslint/eslint-plugin": "^6.17.0",
@@ -50,7 +53,9 @@
     "eslint": "^8.56.0",
     "nodemon": "^3.0.2",
     "prettier": "^3.1.1",
+    "supertest": "^7.2.2",
     "ts-node": "^10.9.2",
-    "typescript": "^5.3.3"
+    "typescript": "^5.3.3",
+    "vitest": "^2.1.9"
   }
 }

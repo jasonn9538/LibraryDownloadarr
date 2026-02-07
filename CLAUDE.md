@@ -5,11 +5,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Post-Change Checklist
 
 **After making code changes, ALWAYS:**
-1. Run `cd frontend && npx tsc --noEmit` and `cd backend && npx tsc --noEmit` to catch errors
-2. Commit changes to main
-3. Push to origin (`git push origin main`) — this triggers GitHub Actions Docker build
-4. Run `./deploy.sh` in the background — it validates TypeScript, waits for the GH Actions build to finish, pulls the new image, and redeploys via Portainer API automatically
-5. For quick iteration without waiting for GitHub Actions: `./deploy.sh --local` (builds Docker image locally then redeploys)
+1. Run `cd backend && npm test` to run integration tests
+2. Run `cd frontend && npx tsc --noEmit` and `cd backend && npx tsc --noEmit` to catch type errors
+3. Commit changes to main
+4. Push to origin (`git push origin main`) — this triggers GitHub Actions (tests + Docker build)
+5. Run `./deploy.sh` in the background — it validates TypeScript, waits for the GH Actions build to finish, pulls the new image, and redeploys via Portainer API automatically
+6. For quick iteration without waiting for GitHub Actions: `./deploy.sh --local` (builds Docker image locally then redeploys)
 
 **IMPORTANT:** Always use `./deploy.sh` to deploy. Do NOT manually push and restart — the script handles the full pipeline (validate → push triggers GH build → wait → pull → Portainer stop/start → health check).
 
@@ -34,7 +35,13 @@ docker-compose up --build        # Build and run locally
 ./deploy.sh --local              # Local build + Portainer redeploy (skip GitHub Actions)
 ```
 
-There are **no tests** in this project. Type-checking (`tsc --noEmit`) is the primary validation.
+```bash
+# Testing
+cd backend && npm test           # Run all backend integration tests (vitest)
+cd backend && npm run test:watch # Watch mode for development
+```
+
+Backend tests use **Vitest + Supertest** with in-memory SQLite databases. Plex-dependent endpoints use mocked `plexService`. Tests are in `backend/src/__tests__/`.
 
 ## Architecture
 
@@ -60,7 +67,8 @@ There are **no tests** in this project. Type-checking (`tsc --noEmit`) is the pr
 - **Bulk (ZIP)**: Season/album downloads stream through archiver as ZIP
 
 ### Deployment
-- GitHub Actions (`.github/workflows/docker-publish.yml`) builds multi-arch Docker image on push to main
+- **CI Pipeline** (`.github/workflows/test.yml`): Runs TypeScript checks + backend tests on every push and PR to main
+- **Docker Build** (`.github/workflows/docker-publish.yml`): Builds multi-arch Docker image on push to main — **depends on test job passing first**
 - Portainer manages the stack (ID 16, endpoint 2) on the local server
 - `deploy.sh` orchestrates: validate TypeScript -> wait for GH build -> pull image -> restart via Portainer API
 - Secrets in `.secrets` (gitignored): `PORTAINER_API_KEY`
@@ -83,6 +91,24 @@ res.setHeader('Content-Disposition', `attachment; filename="${asciiFallback}"; f
 
 ### Tailwind custom colors
 `bg-dark` (#0a0a0f), `bg-dark-100` (#0f0f23), `bg-dark-200` (#1a1a2e), `text-primary-500` (#e87c03 orange), `text-secondary-500` (#b794f4 purple).
+
+## Testing Standards
+
+- **Test-Driven Mindset:** For ANY new feature or existing code modification, ask yourself: "Can this be tested?" If yes, write a test case.
+- **Unit Tests:** Write unit tests for all pure functions, utilities, helpers, and isolated business logic.
+- **Integration Tests:** Write integration tests for API routes, user flows, and component interactions.
+- **Test Coverage:** Prioritize testing critical paths (auth, downloads, transcodes, settings, user management).
+- **CI/CD Gate:** All tests must pass before deployment. The GitHub Actions pipeline enforces this — the Docker build job depends on the test job.
+- **Test Location:** Backend tests go in `backend/src/__tests__/routes/` (route integration tests) and `backend/src/__tests__/helpers/` (test utilities).
+- **Test Isolation:** Each test file gets a fresh in-memory SQLite database. Plex-dependent endpoints use mocked `plexService`.
+- **Running Tests:** `cd backend && npm test` (or `npm run test:watch` during development).
+
+## Code Reusability Standards
+
+- **DRY Principle:** Don't Repeat Yourself — identify repeated code patterns and extract them into reusable components, functions, or utilities.
+- **Component Architecture:** Shared UI elements (headers, footers, navigation, modals, buttons) should be single, reusable components. Page-specific variations should use props/configuration rather than duplicating code.
+- **Before Writing:** Always check if similar functionality already exists that can be reused or extended.
+- **Refactor Opportunities:** When touching existing code, identify and consolidate duplicated patterns.
 
 ## Known Gotchas
 
