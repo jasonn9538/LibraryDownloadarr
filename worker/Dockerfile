@@ -10,12 +10,18 @@ RUN npm run build
 # Production — Ubuntu-based for NVIDIA driver compatibility
 FROM nvidia/cuda:12.3.1-runtime-ubuntu22.04
 
-# Install Node.js and ffmpeg
+# Install Jellyfin ffmpeg (includes NVENC, VAAPI, QSV support) and Node.js
 RUN apt-get update && apt-get install -y \
     curl \
-    ffmpeg \
     libva-dev \
     vainfo \
+    gnupg \
+    && curl -fsSL https://repo.jellyfin.org/ubuntu/jellyfin_team.gpg.key | gpg --dearmor -o /etc/apt/trusted.gpg.d/jellyfin.gpg \
+    && echo "deb [arch=amd64] https://repo.jellyfin.org/ubuntu jammy main" > /etc/apt/sources.list.d/jellyfin.list \
+    && apt-get update \
+    && apt-get install -y jellyfin-ffmpeg6 \
+    && ln -s /usr/lib/jellyfin-ffmpeg/ffmpeg /usr/local/bin/ffmpeg \
+    && ln -s /usr/lib/jellyfin-ffmpeg/ffprobe /usr/local/bin/ffprobe \
     && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y nodejs \
     && apt-get clean && rm -rf /var/lib/apt/lists/*

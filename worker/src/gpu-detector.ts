@@ -11,8 +11,11 @@ function testEncoder(name: string, command: string, timeoutMs: number = 15000): 
   try {
     execSync(command, { timeout: timeoutMs, stdio: 'pipe' });
     return true;
-  } catch {
-    logger.debug(`Encoder ${name} not available`);
+  } catch (error) {
+    logger.warn(`Encoder ${name} test failed`, {
+      error: error instanceof Error ? error.message : String(error),
+      command: command.substring(0, 100)
+    });
     return false;
   }
 }
