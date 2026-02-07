@@ -45,6 +45,9 @@ jobs:
       - name: Run backend tests
         run: cd backend && npm test
 
+      - name: Run frontend tests
+        run: cd frontend && npm test
+
   build-and-push:
     needs: test
     runs-on: ubuntu-latest
