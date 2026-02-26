@@ -1,9 +1,24 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import request from 'supertest';
 import { createTestApp } from '../helpers/app-factory';
 import { createAdminAndToken } from '../helpers/auth-helpers';
 import type { Express } from 'express';
 import { DatabaseService } from '../../models/database';
+import { plexService } from '../../services/plexService';
+
+vi.mock('../../services/plexService', () => ({
+  plexService: {
+    getMediaMetadata: vi.fn().mockResolvedValue({
+      ratingKey: '12345',
+      title: 'Test Movie',
+      duration: 7200000,
+      Media: [{ Part: [{ key: '/library/parts/12345/file.mkv' }] }],
+    }),
+    setServerConnection: vi.fn(),
+    getServerIdentity: vi.fn().mockResolvedValue(null),
+  },
+  RESOLUTION_PRESETS: {},
+}));
 
 let app: Express;
 let db: DatabaseService;
@@ -122,8 +137,9 @@ describe('Worker API Routes', () => {
       expect(res.status).toBe(200);
       expect(res.body.job).toBeDefined();
       expect(res.body.job.mediaTitle).toBe('Test Movie');
-      expect(res.body.plex).toBeDefined();
-      expect(res.body.plex.serverUrl).toBe('http://localhost:32400');
+      expect(res.body.job.durationSeconds).toBeDefined();
+      // plex token should NOT be exposed to workers (security fix)
+      expect(res.body.plex).toBeUndefined();
     });
 
     it('requires X-Worker-Id header', async () => {

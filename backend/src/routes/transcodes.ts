@@ -5,9 +5,23 @@ import { plexService, RESOLUTION_PRESETS } from '../services/plexService';
 import { logger } from '../utils/logger';
 import { AuthRequest, createAuthMiddleware } from '../middleware/auth';
 
+// Validate that a ratingKey is a numeric string (Plex uses integer IDs)
+function isValidRatingKey(key: string): boolean {
+  return /^\d+$/.test(key);
+}
+
 export const createTranscodesRouter = (db: DatabaseService) => {
   const router = Router();
   const authMiddleware = createAuthMiddleware(db);
+
+  // Validate ratingKey params
+  router.param('ratingKey', (_req, res, next, value) => {
+    if (!isValidRatingKey(value)) {
+      res.status(400).json({ error: 'Invalid rating key' });
+      return;
+    }
+    next();
+  });
 
   // Helper function to get user credentials
   const getUserCredentials = (req: AuthRequest): { token: string | undefined; serverUrl: string; error?: string } => {
@@ -125,8 +139,8 @@ export const createTranscodesRouter = (db: DatabaseService) => {
     try {
       const { ratingKey, resolutionId } = req.body;
 
-      if (!ratingKey || !resolutionId) {
-        return res.status(400).json({ error: 'ratingKey and resolutionId are required' });
+      if (!ratingKey || !resolutionId || !isValidRatingKey(ratingKey)) {
+        return res.status(400).json({ error: 'Valid ratingKey and resolutionId are required' });
       }
 
       // Find the resolution preset
@@ -410,6 +424,15 @@ export const createTranscodesRouter = (db: DatabaseService) => {
 
       if (job.status !== 'completed') {
         return res.status(400).json({ error: 'Job is not completed yet' });
+      }
+
+      // Verify the user owns this job, is a requester, or is an admin
+      if (job.userId !== req.user!.id && !req.user?.isAdmin) {
+        // Check if they're a requester of this job
+        const userJobs = transcodeManager.getUserJobs(req.user!.id);
+        if (!userJobs.some(j => j.id === jobId)) {
+          return res.status(403).json({ error: 'Access denied' });
+        }
       }
 
       // Log the download

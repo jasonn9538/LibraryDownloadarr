@@ -16,10 +16,7 @@ export interface ClaimedJob {
     mediaTitle: string;
     mediaType: string;
     filename: string;
-  };
-  plex: {
-    serverUrl: string;
-    token: string;
+    durationSeconds: number;
   };
 }
 
@@ -94,6 +91,21 @@ export class ApiClient {
       maxContentLength: Infinity,
       maxBodyLength: Infinity,
       timeout: 0, // No timeout for large file uploads
+    });
+  }
+
+  async downloadSource(jobId: string, destPath: string): Promise<void> {
+    const response = await this.client.get(`/jobs/${jobId}/source`, {
+      responseType: 'stream',
+      timeout: 0, // No timeout for large downloads
+    });
+
+    const writeStream = fs.createWriteStream(destPath);
+    await new Promise<void>((resolve, reject) => {
+      response.data.pipe(writeStream);
+      writeStream.on('finish', resolve);
+      writeStream.on('error', reject);
+      response.data.on('error', reject);
     });
   }
 

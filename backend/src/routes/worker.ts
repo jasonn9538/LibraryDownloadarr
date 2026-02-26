@@ -2,10 +2,15 @@ import { Router } from 'express';
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
+import axios from 'axios';
+import https from 'https';
 import { DatabaseService } from '../models/database';
 import { logger } from '../utils/logger';
 import { WorkerAuthRequest, createWorkerAuthMiddleware } from '../middleware/workerAuth';
 import { transcodeManager } from '../services/transcodeManager';
+import { plexService } from '../services/plexService';
+
+const httpsAgent = new https.Agent({ rejectUnauthorized: false });
 
 export const createWorkerRouter = (db: DatabaseService) => {
   const router = Router();
@@ -26,7 +31,10 @@ export const createWorkerRouter = (db: DatabaseService) => {
       cb(null, `${uniqueSuffix}-${file.originalname}`);
     },
   });
-  const upload = multer({ storage });
+  const upload = multer({
+    storage,
+    limits: { fileSize: 50 * 1024 * 1024 * 1024 }, // 50GB max upload
+  });
 
   // POST /api/worker/register - Worker announces itself
   router.post('/register', workerAuth, (req: WorkerAuthRequest, res) => {
@@ -54,7 +62,7 @@ export const createWorkerRouter = (db: DatabaseService) => {
   });
 
   // GET /api/worker/claim - Atomically claim next pending job
-  router.get('/claim', workerAuth, (req: WorkerAuthRequest, res) => {
+  router.get('/claim', workerAuth, async (req: WorkerAuthRequest, res) => {
     try {
       const workerId = req.workerId;
       if (!workerId) {
@@ -73,14 +81,19 @@ export const createWorkerRouter = (db: DatabaseService) => {
         return res.status(204).send();
       }
 
-      // Build Plex download URL for the worker
-      const serverUrl = db.getSetting('plex_url');
+      // Resolve metadata server-side so we don't leak the Plex token to workers
       const plexToken = db.getSetting('plex_token');
-
-      if (!serverUrl || !plexToken) {
-        // Unclaim the job since we can't provide download info
+      if (!plexToken) {
         db.resetStaleWorkerJob(job.id);
         return res.status(500).json({ error: 'Plex server not configured' });
+      }
+
+      let durationSeconds = 0;
+      try {
+        const metadata = await plexService.getMediaMetadata(job.ratingKey, plexToken);
+        durationSeconds = (metadata.duration || 0) / 1000;
+      } catch (err) {
+        logger.warn('Failed to resolve duration for worker job', { jobId: job.id });
       }
 
       logger.info('Job claimed by worker', {
@@ -100,15 +113,69 @@ export const createWorkerRouter = (db: DatabaseService) => {
           mediaTitle: job.mediaTitle,
           mediaType: job.mediaType,
           filename: job.filename,
-        },
-        plex: {
-          serverUrl,
-          token: plexToken,
+          durationSeconds,
         },
       });
     } catch (error) {
       logger.error('Failed to claim job', { error });
       return res.status(500).json({ error: 'Failed to claim job' });
+    }
+  });
+
+  // GET /api/worker/jobs/:jobId/source - Proxy download of source file from Plex
+  // Workers use this instead of accessing Plex directly (avoids leaking admin token)
+  router.get('/jobs/:jobId/source', workerAuth, async (req: WorkerAuthRequest, res) => {
+    try {
+      const { jobId } = req.params;
+      const workerId = req.workerId;
+
+      const job = db.getTranscodeJob(jobId);
+      if (!job) {
+        return res.status(404).json({ error: 'Job not found' });
+      }
+
+      if (job.workerId !== workerId) {
+        return res.status(403).json({ error: 'Job not assigned to this worker' });
+      }
+
+      const serverUrl = db.getSetting('plex_url');
+      const plexToken = db.getSetting('plex_token');
+      if (!serverUrl || !plexToken) {
+        return res.status(500).json({ error: 'Plex server not configured' });
+      }
+
+      // Resolve part key from Plex metadata
+      const metadata = await plexService.getMediaMetadata(job.ratingKey, plexToken);
+      const partKey = metadata.Media?.[0]?.Part?.[0]?.key;
+      if (!partKey) {
+        return res.status(404).json({ error: 'Could not find media part key' });
+      }
+
+      // Stream the file from Plex to the worker
+      const downloadUrl = `${serverUrl}${partKey}?download=1&X-Plex-Token=${plexToken}`;
+      const plexResponse = await axios({
+        method: 'GET',
+        url: downloadUrl,
+        responseType: 'stream',
+        httpsAgent,
+      });
+
+      // Forward content headers
+      if (plexResponse.headers['content-length']) {
+        res.setHeader('Content-Length', plexResponse.headers['content-length']);
+      }
+      if (plexResponse.headers['content-type']) {
+        res.setHeader('Content-Type', plexResponse.headers['content-type']);
+      }
+
+      plexResponse.data.pipe(res);
+      return;
+    } catch (error) {
+      logger.error('Failed to proxy source file', { error });
+      if (!res.headersSent) {
+        res.status(500).json({ error: 'Failed to download source file' });
+      }
+      return;
     }
   });
 

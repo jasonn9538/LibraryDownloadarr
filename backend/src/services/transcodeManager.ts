@@ -286,6 +286,11 @@ class TranscodeManager {
     // Check if there's already a job for this cache key
     const existingJob = this.db.getTranscodeJobByCacheKey(ratingKey, resolutionId);
     if (existingJob) {
+      // If a different user requested the same transcode, track them so it shows in their list
+      if (existingJob.userId !== userId) {
+        this.db.addTranscodeJobRequester(existingJob.id, userId);
+        logger.info('Added requester to existing transcode job', { jobId: existingJob.id, requesterId: userId });
+      }
       logger.info('Transcode job already exists', { jobId: existingJob.id, status: existingJob.status });
       return existingJob;
     }

@@ -1,15 +1,11 @@
 import fs from 'fs';
 import path from 'path';
-import axios from 'axios';
-import https from 'https';
 import { ChildProcess } from 'child_process';
 import { config } from './config';
 import { logger } from './logger';
 import { ApiClient, ClaimedJob } from './api-client';
 import { transcode } from './transcoder';
 import { GpuCapabilities } from './gpu-detector';
-
-const httpsAgent = new https.Agent({ rejectUnauthorized: false });
 
 export class JobRunner {
   private apiClient: ApiClient;
@@ -98,42 +94,15 @@ export class JobRunner {
   }
 
   private async processJob(claimed: ClaimedJob): Promise<void> {
-    const { job, plex } = claimed;
+    const { job } = claimed;
     const inputPath = path.join(config.tempDir, `input-${job.id}.tmp`);
     const outputPath = path.join(config.tempDir, `output-${job.id}.mp4`);
+    const durationSeconds = job.durationSeconds || 0;
 
     try {
-      // Step 1: Get media metadata to find the part key and duration
-      logger.info('Fetching media metadata', { jobId: job.id, ratingKey: job.ratingKey });
-      const metadataUrl = `${plex.serverUrl}/library/metadata/${job.ratingKey}?X-Plex-Token=${plex.token}`;
-      const metadataResponse = await axios.get(metadataUrl, { httpsAgent });
-      const metadata = metadataResponse.data?.MediaContainer?.Metadata?.[0];
-      const partKey = metadata?.Media?.[0]?.Part?.[0]?.key;
-      const duration = metadata?.Media?.[0]?.duration || 0;
-      const durationSeconds = duration / 1000;
-
-      if (!partKey) {
-        throw new Error('Could not find media part key');
-      }
-
-      // Step 2: Download source file
-      const downloadUrl = `${plex.serverUrl}${partKey}?download=1&X-Plex-Token=${plex.token}`;
-      logger.info('Downloading source file', { jobId: job.id });
-
-      const downloadResponse = await axios({
-        method: 'GET',
-        url: downloadUrl,
-        responseType: 'stream',
-        httpsAgent,
-      });
-
-      const writeStream = fs.createWriteStream(inputPath);
-      await new Promise<void>((resolve, reject) => {
-        downloadResponse.data.pipe(writeStream);
-        writeStream.on('finish', resolve);
-        writeStream.on('error', reject);
-        downloadResponse.data.on('error', reject);
-      });
+      // Step 1: Download source file via server proxy (server handles Plex auth)
+      logger.info('Downloading source file via server proxy', { jobId: job.id });
+      await this.apiClient.downloadSource(job.id, inputPath);
 
       logger.info('Source file downloaded', {
         jobId: job.id,

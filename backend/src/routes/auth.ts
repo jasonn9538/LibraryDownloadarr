@@ -58,23 +58,20 @@ function isPrivateIp(ip: string): boolean {
 
 /**
  * Check if the request originates from a local/private network.
- * Uses req.socket.remoteAddress (raw TCP address) which cannot be spoofed,
- * unlike X-Forwarded-For headers.
+ * With trust proxy enabled, req.ip reflects the real client IP.
  */
 function isLocalRequest(req: Request): boolean {
-  const socketAddr = req.socket.remoteAddress;
-  if (!socketAddr) return false;
-  return isPrivateIp(socketAddr);
+  const clientIp = req.ip;
+  if (!clientIp) return false;
+  return isPrivateIp(clientIp);
 }
 
+/**
+ * Get the real client IP address.
+ * Relies on Express trust proxy setting to correctly parse X-Forwarded-For.
+ */
 function getClientIp(req: Request): string {
-  // Support for reverse proxies
-  const forwarded = req.headers['x-forwarded-for'];
-  if (forwarded) {
-    const ips = (typeof forwarded === 'string' ? forwarded : forwarded[0]).split(',');
-    return ips[0].trim();
-  }
-  return req.ip || req.socket.remoteAddress || 'unknown';
+  return req.ip || 'unknown';
 }
 
 export const createAuthRouter = (db: DatabaseService) => {
@@ -340,7 +337,7 @@ export const createAuthRouter = (db: DatabaseService) => {
   <script>
     // Notify the parent window that auth is complete
     if (window.opener) {
-      try { window.opener.postMessage({ type: 'plex-auth-complete' }, '*'); } catch(e) {}
+      try { window.opener.postMessage({ type: 'plex-auth-complete' }, window.location.origin); } catch(e) {}
     }
     // Try to close the window
     window.close();

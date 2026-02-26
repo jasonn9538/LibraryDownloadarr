@@ -52,8 +52,13 @@ COPY --from=backend-builder /app/backend/dist ./dist
 # Copy built frontend
 COPY --from=frontend-builder /app/frontend/dist ./public
 
-# Create data directory and transcode directory
-RUN mkdir -p /app/data /app/logs /app/transcode
+# Create non-root user and data directories
+RUN addgroup -g 1000 appgroup && \
+    adduser -u 1000 -G appgroup -D appuser && \
+    mkdir -p /app/data /app/logs /app/transcode && \
+    chown -R appuser:appgroup /app
+
+USER appuser
 
 # Set environment variables
 ENV NODE_ENV=production

@@ -51,6 +51,12 @@ echo ""
 # LOAD SECRETS AND CONFIG
 # ==========================================
 if [ -f "$SCRIPT_DIR/.secrets" ]; then
+    # Ensure secrets file has restricted permissions
+    PERMS=$(stat -c '%a' "$SCRIPT_DIR/.secrets" 2>/dev/null || stat -f '%Lp' "$SCRIPT_DIR/.secrets" 2>/dev/null)
+    if [ "$PERMS" != "600" ]; then
+        echo -e "${YELLOW}Warning: .secrets has loose permissions ($PERMS). Fixing to 600...${NC}"
+        chmod 600 "$SCRIPT_DIR/.secrets"
+    fi
     source "$SCRIPT_DIR/.secrets"
 else
     echo -e "${RED}Error: .secrets file not found!${NC}"
@@ -107,19 +113,35 @@ fi
 echo ""
 echo "Deploying via Portainer..."
 
-# Stop the stack via Portainer API
-echo "Stopping stack..."
-curl -s -X POST \
+# Use Portainer's git redeploy which pulls image + recreates container
+# (stop/start only restarts the existing container without pulling new images)
+echo "Pulling image and redeploying stack..."
+HTTP_REDEPLOY=$(curl -s -o /dev/null -w "%{http_code}" -X PUT \
     -H "X-API-Key: $PORTAINER_API_KEY" \
-    "$PORTAINER_URL/api/stacks/$STACK_ID/stop?endpointId=$ENDPOINT_ID" > /dev/null
+    -H "Content-Type: application/json" \
+    -d '{"pullImage": true, "prune": false}' \
+    "$PORTAINER_URL/api/stacks/$STACK_ID/git/redeploy?endpointId=$ENDPOINT_ID")
 
-sleep 2
+if [ "$HTTP_REDEPLOY" = "200" ]; then
+    echo -e "${GREEN}Stack redeployed via Portainer${NC}"
+else
+    echo -e "${YELLOW}Git redeploy returned $HTTP_REDEPLOY, falling back to stop/start...${NC}"
+    # Fallback: stop, pull, start
+    echo "Stopping stack..."
+    curl -s -X POST \
+        -H "X-API-Key: $PORTAINER_API_KEY" \
+        "$PORTAINER_URL/api/stacks/$STACK_ID/stop?endpointId=$ENDPOINT_ID" > /dev/null
 
-# Start the stack via Portainer API
-echo "Starting stack..."
-curl -s -X POST \
-    -H "X-API-Key: $PORTAINER_API_KEY" \
-    "$PORTAINER_URL/api/stacks/$STACK_ID/start?endpointId=$ENDPOINT_ID" > /dev/null
+    sleep 2
+
+    echo "Pulling latest image..."
+    sudo docker pull "$IMAGE"
+
+    echo "Starting stack..."
+    curl -s -X POST \
+        -H "X-API-Key: $PORTAINER_API_KEY" \
+        "$PORTAINER_URL/api/stacks/$STACK_ID/start?endpointId=$ENDPOINT_ID" > /dev/null
+fi
 
 sleep 5
 

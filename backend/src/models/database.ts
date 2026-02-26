@@ -216,6 +216,17 @@ export class DatabaseService {
       CREATE INDEX IF NOT EXISTS idx_transcode_jobs_rating_key_resolution ON transcode_jobs(rating_key, resolution_id);
     `);
 
+    // Track when users request a transcode that already exists (owned by someone else)
+    // So it appears in their transcode list too
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS transcode_job_requesters (
+        job_id TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        requested_at INTEGER NOT NULL,
+        PRIMARY KEY (job_id, user_id)
+      )
+    `);
+
     // Failed login attempts table (for persistent brute force protection)
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS failed_login_attempts (
@@ -582,6 +593,14 @@ export class DatabaseService {
     return row ? this.mapTranscodeJob(row) : undefined;
   }
 
+  addTranscodeJobRequester(jobId: string, userId: string): void {
+    const stmt = this.db.prepare(`
+      INSERT OR IGNORE INTO transcode_job_requesters (job_id, user_id, requested_at)
+      VALUES (?, ?, ?)
+    `);
+    stmt.run(jobId, userId, Date.now());
+  }
+
   getUserTranscodeJobs(userId: string): TranscodeJob[] {
     // First, get the username for this user (handles both admin and plex users)
     const userQuery = this.db.prepare(`
@@ -592,8 +611,7 @@ export class DatabaseService {
     const userResult = userQuery.get(userId, userId) as { username: string } | undefined;
     const username = userResult?.username;
 
-    // Get transcodes for this user OR any user with the same username
-    // This handles cases where the same person logs in with different Plex managed users
+    // Get transcodes owned by this user, same-username users, OR shared via requesters table
     const stmt = this.db.prepare(`
       SELECT tj.*,
              COALESCE(au.username, pu.username) as username,
@@ -602,7 +620,8 @@ export class DatabaseService {
       LEFT JOIN admin_users au ON tj.user_id = au.id
       LEFT JOIN plex_users pu ON tj.user_id = pu.id
       LEFT JOIN workers w ON tj.worker_id = w.id
-      WHERE (tj.user_id = ? OR COALESCE(au.username, pu.username) = ?)
+      WHERE (tj.user_id = ? OR COALESCE(au.username, pu.username) = ?
+             OR tj.id IN (SELECT job_id FROM transcode_job_requesters WHERE user_id = ?))
         AND (tj.expires_at IS NULL OR tj.expires_at > ? OR tj.status NOT IN ('completed', 'error', 'cancelled'))
       ORDER BY
         CASE tj.status
@@ -615,7 +634,7 @@ export class DatabaseService {
         CASE WHEN tj.status = 'pending' THEN tj.queue_position END ASC,
         tj.created_at DESC
     `);
-    const rows = stmt.all(userId, username || '', Date.now()) as any[];
+    const rows = stmt.all(userId, username || '', userId, Date.now()) as any[];
     return rows.map(row => this.mapTranscodeJob(row));
   }
 

@@ -31,6 +31,10 @@ setInterval(() => {
 // Create Express app
 const app = express();
 
+// Trust the first proxy hop (reverse proxy like nginx/Caddy/Traefik)
+// This makes req.ip use X-Forwarded-For correctly for rate limiting and IP banning
+app.set('trust proxy', 1);
+
 // Security middleware
 app.use(helmet({
   contentSecurityPolicy: {

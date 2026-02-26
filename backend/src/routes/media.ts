@@ -10,6 +10,11 @@ import https from 'https';
 import path from 'path';
 import { createZipStream, ZipFileEntry } from '../utils/zipUtils';
 
+// Validate that a ratingKey is a numeric string (Plex uses integer IDs)
+function isValidRatingKey(key: string): boolean {
+  return /^\d+$/.test(key);
+}
+
 // In-memory cache for hub responses (avoids hammering Plex's slow /hubs endpoint)
 interface CacheEntry {
   data: any;
@@ -66,6 +71,15 @@ const buildContentDisposition = (filename: string): string => {
 export const createMediaRouter = (db: DatabaseService) => {
   const router = Router();
   const authMiddleware = createAuthMiddleware(db);
+
+  // Validate ratingKey params to prevent injection
+  router.param('ratingKey', (_req, res, next, value) => {
+    if (!isValidRatingKey(value)) {
+      res.status(400).json({ error: 'Invalid rating key' });
+      return;
+    }
+    next();
+  });
 
   // Helper function to format media title for download logs
   const formatMediaTitle = (metadata: any, libraryTitle?: string): string => {
@@ -308,10 +322,8 @@ export const createMediaRouter = (db: DatabaseService) => {
         query: req.query.q,
         userId: req.user?.id
       });
-      return res.status(500).json({
-        error: 'Search failed',
-        details: error.message
-      });
+      logger.error('Search failed', { error: error instanceof Error ? error.message : error });
+      return res.status(500).json({ error: 'Search failed' });
     }
   });
 
