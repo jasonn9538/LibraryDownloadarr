@@ -273,7 +273,7 @@ export const Transcodes: React.FC = () => {
               </button>
             </div>
           )}
-          {(job.status === 'pending' || job.status === 'transcoding') && isOwnJob && (
+          {(job.status === 'pending' || job.status === 'transcoding') && (isOwnJob || user?.isAdmin) && (
             <button
               onClick={() => {
                 if (confirm('Are you sure you want to cancel this transcode?')) {
@@ -285,7 +285,7 @@ export const Transcodes: React.FC = () => {
               Cancel
             </button>
           )}
-          {job.status === 'error' && isOwnJob && (
+          {job.status === 'error' && (isOwnJob || user?.isAdmin) && (
             <button
               onClick={() => handleRetry(job)}
               className="btn-primary px-4 py-2 text-sm flex items-center gap-2"
@@ -294,7 +294,7 @@ export const Transcodes: React.FC = () => {
               Retry
             </button>
           )}
-          {(job.status === 'error' || job.status === 'completed') && isOwnJob && (
+          {(job.status === 'error' || job.status === 'completed') && (isOwnJob || user?.isAdmin) && (
             <button
               onClick={() => {
                 if (confirm('Are you sure you want to remove this transcode? The file will be deleted.')) {
