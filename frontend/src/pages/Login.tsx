@@ -1,7 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../stores/authStore';
 import { api } from '../services/api';
+
+const PLEX_AUTH_KEY = 'plex_auth_pending';
 
 export const Login: React.FC = () => {
   const [username, setUsername] = useState('');
@@ -13,6 +15,51 @@ export const Login: React.FC = () => {
   const [adminLoginEnabled, setAdminLoginEnabled] = useState<boolean | null>(null);
   const navigate = useNavigate();
   const { login, setUser, setToken, token, user } = useAuthStore();
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Clean up polling on unmount
+  useEffect(() => {
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+    };
+  }, []);
+
+  // Poll for Plex auth completion
+  const startPolling = useCallback((pinId: number) => {
+    setIsPlexLoading(true);
+    setError('');
+    let attempts = 0;
+    const maxAttempts = 60;
+
+    pollRef.current = setInterval(async () => {
+      attempts++;
+      try {
+        const response = await api.authenticatePlexPin(pinId);
+        // Success — clean up and log in
+        if (pollRef.current) clearInterval(pollRef.current);
+        localStorage.removeItem(PLEX_AUTH_KEY);
+        setUser(response.user);
+        setToken(response.token);
+        setIsPlexLoading(false);
+        navigate('/');
+      } catch (err: any) {
+        if (err.response?.status === 403 || err.response?.status === 500) {
+          if (pollRef.current) clearInterval(pollRef.current);
+          localStorage.removeItem(PLEX_AUTH_KEY);
+          setError(err.response?.data?.error || 'Authentication failed. Please try again.');
+          setIsPlexLoading(false);
+          return;
+        }
+        if (attempts >= maxAttempts) {
+          if (pollRef.current) clearInterval(pollRef.current);
+          localStorage.removeItem(PLEX_AUTH_KEY);
+          setError('Plex authentication timed out. Please try again.');
+          setIsPlexLoading(false);
+        }
+        // 400 = not yet authorized, keep polling
+      }
+    }, 2000);
+  }, [setUser, setToken, navigate]);
 
   // Check if admin login is enabled
   useEffect(() => {
@@ -20,6 +67,21 @@ export const Login: React.FC = () => {
       .then(setAdminLoginEnabled)
       .catch(() => setAdminLoginEnabled(false));
   }, []);
+
+  // On mount: check for pending Plex auth (user was redirected back from Plex)
+  useEffect(() => {
+    const pending = localStorage.getItem(PLEX_AUTH_KEY);
+    if (pending) {
+      try {
+        const { pinId } = JSON.parse(pending);
+        if (pinId) {
+          startPolling(pinId);
+        }
+      } catch {
+        localStorage.removeItem(PLEX_AUTH_KEY);
+      }
+    }
+  }, [startPolling]);
 
   // Redirect to home if already logged in
   useEffect(() => {
@@ -47,100 +109,19 @@ export const Login: React.FC = () => {
     setError('');
     setIsPlexLoading(true);
 
-    // IMPORTANT: Open window immediately (synchronously) before any async operations
-    // Mobile browsers block window.open() if it's not directly in the click handler
-    const authWindow = window.open('about:blank', '_blank', 'width=600,height=700');
-
-    // Listen for postMessage from the popup callback page
-    // This is a reliable way to close the popup even when window.close() is blocked
-    // by the browser due to cross-origin navigation through app.plex.tv
-    const handleMessage = (event: MessageEvent) => {
-      if (event.data?.type === 'plex-auth-complete' && authWindow && !authWindow.closed) {
-        authWindow.close();
-      }
-    };
-    window.addEventListener('message', handleMessage);
-
     try {
       // Generate PIN
       const pin = await api.generatePlexPin();
 
-      // Navigate the already-opened window to Plex auth
-      if (authWindow) {
-        authWindow.location.href = pin.url;
-      } else {
-        // Fallback if popup was blocked
-        window.removeEventListener('message', handleMessage);
-        setError('Popup blocked. Please allow popups for this site and try again.');
-        setIsPlexLoading(false);
-        return;
-      }
+      // Save PIN ID so we can resume after redirect
+      localStorage.setItem(PLEX_AUTH_KEY, JSON.stringify({ pinId: pin.id }));
 
-      // Poll for authentication
-      const maxAttempts = 60; // 2 minutes (60 * 2 seconds)
-      let attempts = 0;
-
-      const pollInterval = setInterval(async () => {
-        attempts++;
-
-        try {
-          const response = await api.authenticatePlexPin(pin.id);
-          clearInterval(pollInterval);
-          window.removeEventListener('message', handleMessage);
-          // Close the Plex auth window
-          if (authWindow && !authWindow.closed) {
-            authWindow.close();
-          }
-          setUser(response.user);
-          setToken(response.token);
-          setIsPlexLoading(false);
-          navigate('/');
-        } catch (err: any) {
-          // Check if this is a 403 (access denied) error
-          if (err.response?.status === 403) {
-            clearInterval(pollInterval);
-            window.removeEventListener('message', handleMessage);
-            if (authWindow && !authWindow.closed) {
-              authWindow.close();
-            }
-            setError(err.response?.data?.error || 'Access denied. You do not have access to this Plex server.');
-            setIsPlexLoading(false);
-            return;
-          }
-
-          // Check if this is a 500 (server error) - likely machine ID not configured
-          if (err.response?.status === 500) {
-            clearInterval(pollInterval);
-            window.removeEventListener('message', handleMessage);
-            if (authWindow && !authWindow.closed) {
-              authWindow.close();
-            }
-            setError(err.response?.data?.error || 'Server error. Please contact the administrator.');
-            setIsPlexLoading(false);
-            return;
-          }
-
-          // Check for timeout
-          if (attempts >= maxAttempts) {
-            clearInterval(pollInterval);
-            window.removeEventListener('message', handleMessage);
-            if (authWindow && !authWindow.closed) {
-              authWindow.close();
-            }
-            setError('Plex authentication timeout. Please try again.');
-            setIsPlexLoading(false);
-          }
-          // Continue polling for 400 errors (not yet authorized)
-        }
-      }, 2000);
+      // Navigate current page to Plex auth — no popup needed
+      // Plex will redirect back to /login after auth, where we resume polling
+      window.location.href = pin.url;
     } catch (err: any) {
-      window.removeEventListener('message', handleMessage);
       setError(err.response?.data?.error || 'Failed to initiate Plex login');
       setIsPlexLoading(false);
-      // Close the blank window if PIN generation failed
-      if (authWindow) {
-        authWindow.close();
-      }
     }
   };
 
@@ -173,9 +154,9 @@ export const Login: React.FC = () => {
           {isPlexLoading && (
             <div className="mt-4 p-4 bg-primary-500/10 border border-primary-500/20 rounded-lg">
               <p className="text-xs md:text-sm text-gray-300 text-center">
-                <strong>Waiting for authorization...</strong>
+                <strong>Completing authentication...</strong>
                 <br />
-                Complete the login in the popup window.
+                Please wait while we verify your Plex account.
               </p>
             </div>
           )}

@@ -358,11 +358,11 @@ export const createAuthRouter = (db: DatabaseService) => {
     try {
       const pin = await plexService.generatePin();
 
-      // Build the callback URL for auto-closing the popup
-      // Use the origin from the request or fall back to relative path
+      // Build the callback URL — redirect back to the frontend login page
+      // The login page detects the pending auth in localStorage and completes it
       const protocol = req.headers['x-forwarded-proto'] || req.protocol;
       const host = req.headers['x-forwarded-host'] || req.headers.host;
-      const callbackUrl = host ? `${protocol}://${host}/api/auth/plex/callback` : '/api/auth/plex/callback';
+      const callbackUrl = host ? `${protocol}://${host}/login` : '/login';
 
       return res.json({
         id: pin.id,
