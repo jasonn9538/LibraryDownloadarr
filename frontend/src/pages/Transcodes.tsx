@@ -285,10 +285,11 @@ export const Transcodes: React.FC = () => {
               Cancel
             </button>
           )}
-          {job.status === 'error' && (isOwnJob || user?.isAdmin) && (
+          {(job.status === 'error' || job.status === 'completed') && (isOwnJob || user?.isAdmin) && (
             <button
               onClick={() => handleRetry(job)}
-              className="btn-primary px-4 py-2 text-sm flex items-center gap-2"
+              className="btn-secondary px-4 py-2 text-sm flex items-center gap-2 text-gray-300 hover:text-white"
+              title="Re-queue this transcode"
             >
               <span>🔄</span>
               Retry
