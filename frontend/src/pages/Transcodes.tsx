@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react';
+import { Link } from 'react-router-dom';
 import { Header } from '../components/Header';
 import { Sidebar } from '../components/Sidebar';
 import { useMobileMenu } from '../hooks/useMobileMenu';
@@ -162,12 +163,22 @@ export const Transcodes: React.FC = () => {
 
       return (
         <div className="min-w-0">
-          <h3 className="font-medium text-white truncate">{showName}</h3>
-          {subtitle && <p className="text-sm text-gray-400 truncate">{subtitle}</p>}
+          <Link to={`/media/${job.ratingKey}`} className="font-medium text-white truncate block hover:text-primary-400 transition-colors">
+            {showName}
+          </Link>
+          {subtitle && (
+            <Link to={`/media/${job.ratingKey}`} className="text-sm text-gray-400 truncate block hover:text-gray-300 transition-colors">
+              {subtitle}
+            </Link>
+          )}
         </div>
       );
     }
-    return <h3 className="font-medium text-white truncate">{job.mediaTitle}</h3>;
+    return (
+      <Link to={`/media/${job.ratingKey}`} className="font-medium text-white truncate block hover:text-primary-400 transition-colors">
+        {job.mediaTitle}
+      </Link>
+    );
   };
 
   const renderJobCard = (job: TranscodeJob, index?: number, totalPending?: number) => {

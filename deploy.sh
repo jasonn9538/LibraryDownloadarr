@@ -59,7 +59,7 @@ else
 fi
 
 PORTAINER_URL="http://localhost:9000"
-STACK_ID="16"
+STACK_ID="27"
 ENDPOINT_ID="2"
 IMAGE="ghcr.io/jasonn9538/librarydownloadarr:latest"
 
