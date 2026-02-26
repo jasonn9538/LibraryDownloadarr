@@ -311,7 +311,7 @@ export const MediaDetail: React.FC = () => {
       <Header onMenuClick={toggleMobileMenu} />
       <div className="flex flex-1 overflow-hidden">
         <Sidebar isOpen={isMobileMenuOpen} onClose={closeMobileMenu} />
-        <main className="flex-1 overflow-y-auto">
+        <main className={`flex-1 overflow-y-auto ${isEpisodeSelectionMode && selectedEpisodes.size > 0 ? 'pb-24' : ''}`}>
           {/* Transcode queued notification */}
           {transcodeQueued && (
             <div className="fixed top-20 left-1/2 transform -translate-x-1/2 z-50 bg-blue-500/90 text-white px-6 py-3 rounded-lg shadow-lg flex items-center gap-3 animate-fade-in">
@@ -347,6 +347,48 @@ export const MediaDetail: React.FC = () => {
 
           <div className={`p-4 md:p-8 relative z-10 ${backdropUrl ? '-mt-24 md:-mt-48' : ''}`}>
             <div className="max-w-7xl mx-auto">
+              {/* Breadcrumb navigation for seasons/episodes */}
+              {(media.type === 'season' || media.type === 'episode') && (
+                <nav className="flex items-center gap-2 text-sm text-gray-400 mb-4 flex-wrap">
+                  {media.type === 'episode' && media.grandparentTitle && (
+                    <>
+                      <button
+                        onClick={() => {
+                          if (media.grandparentRatingKey) navigate(`/media/${media.grandparentRatingKey}`);
+                        }}
+                        className={`hover:text-white transition-colors ${media.grandparentRatingKey ? 'cursor-pointer' : 'cursor-default'}`}
+                      >
+                        {media.grandparentTitle}
+                      </button>
+                      <span className="text-gray-600">/</span>
+                    </>
+                  )}
+                  {media.parentTitle && media.parentRatingKey && (
+                    <>
+                      <button
+                        onClick={() => navigate(`/media/${media.parentRatingKey}`)}
+                        className="hover:text-white transition-colors cursor-pointer"
+                      >
+                        {media.parentTitle}
+                      </button>
+                      <span className="text-gray-600">/</span>
+                    </>
+                  )}
+                  {media.type === 'season' && media.parentRatingKey && (
+                    <>
+                      <button
+                        onClick={() => navigate(`/media/${media.parentRatingKey}`)}
+                        className="hover:text-white transition-colors cursor-pointer"
+                      >
+                        {media.grandparentTitle || 'Show'}
+                      </button>
+                      <span className="text-gray-600">/</span>
+                    </>
+                  )}
+                  <span className="text-white">{media.title}</span>
+                </nav>
+              )}
+
               <div className="flex flex-col md:flex-row gap-4 md:gap-8">
                 {/* Poster */}
                 <div className="flex-shrink-0">
@@ -515,7 +557,9 @@ export const MediaDetail: React.FC = () => {
                                     />
                                   )}
                                   <div>
-                                    <div className="font-medium text-sm md:text-base">{episode.title}</div>
+                                    <div className="font-medium text-sm md:text-base">
+                                          {episode.index != null ? `Episode ${episode.index} - ` : ''}{episode.title}
+                                        </div>
                                     <div className="text-xs md:text-sm text-gray-400">
                                       {episode.duration && formatDuration(episode.duration)}
                                       {episode.Media?.[0]?.Part?.[0]?.size && (
@@ -659,7 +703,9 @@ export const MediaDetail: React.FC = () => {
                                               />
                                             )}
                                             <div>
-                                              <div className="font-medium text-sm md:text-base">{episode.title}</div>
+                                              <div className="font-medium text-sm md:text-base">
+                                          {episode.index != null ? `Episode ${episode.index} - ` : ''}{episode.title}
+                                        </div>
                                               <div className="text-xs md:text-sm text-gray-400">
                                                 {episode.duration && formatDuration(episode.duration)}
                                                 {episode.Media?.[0]?.Part?.[0]?.size && (

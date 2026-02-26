@@ -163,6 +163,34 @@ export const createSettingsRouter = (db: DatabaseService) => {
     }
   });
 
+  // GET /api/settings/banned-ips - List banned IPs (admin only)
+  router.get('/banned-ips', authMiddleware, adminMiddleware, (_req: AuthRequest, res) => {
+    try {
+      const bannedIps = db.getBannedIps();
+      return res.json({ bannedIps });
+    } catch (error) {
+      logger.error('Failed to get banned IPs', { error });
+      return res.status(500).json({ error: 'Failed to get banned IPs' });
+    }
+  });
+
+  // DELETE /api/settings/banned-ips/:ip - Unban an IP (admin only)
+  router.delete('/banned-ips/:ip', authMiddleware, adminMiddleware, (req: AuthRequest, res) => {
+    try {
+      const { ip } = req.params;
+      const success = db.unbanIp(decodeURIComponent(ip));
+      if (!success) {
+        return res.status(404).json({ error: 'IP not found in ban list' });
+      }
+      logger.info('IP unbanned by admin', { ip: decodeURIComponent(ip), adminUser: req.user?.username });
+      db.logAuditEvent('IP_UNBANNED', req.user?.id, req.user?.username, req.ip, { unbannedIp: decodeURIComponent(ip) });
+      return res.json({ message: 'IP unbanned successfully' });
+    } catch (error) {
+      logger.error('Failed to unban IP', { error });
+      return res.status(500).json({ error: 'Failed to unban IP' });
+    }
+  });
+
   // POST /api/settings/workers/generate-key - Generate new API key (admin only)
   router.post('/workers/generate-key', authMiddleware, adminMiddleware, (req: AuthRequest, res) => {
     try {

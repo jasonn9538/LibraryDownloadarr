@@ -2,14 +2,15 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Header } from '../components/Header';
 import { Sidebar } from '../components/Sidebar';
-import { MediaGrid } from '../components/MediaGrid';
+import { HubRow } from '../components/HubRow';
 import { api } from '../services/api';
-import { MediaItem } from '../types';
+import { Hub } from '../types';
 import { useAuthStore } from '../stores/authStore';
 import { useMobileMenu } from '../hooks/useMobileMenu';
+import { WelcomeModal } from '../components/WelcomeModal';
 
 export const Dashboard: React.FC = () => {
-  const [recentlyAdded, setRecentlyAdded] = useState<MediaItem[]>([]);
+  const [hubs, setHubs] = useState<Hub[]>([]);
   const [stats, setStats] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(true);
   const navigate = useNavigate();
@@ -17,22 +18,19 @@ export const Dashboard: React.FC = () => {
   const { isMobileMenuOpen, toggleMobileMenu, closeMobileMenu } = useMobileMenu();
 
   useEffect(() => {
-    // Wait for user to be loaded
     if (!user) {
       return;
     }
-
-    // Load dashboard for all users
     loadDashboard();
   }, [user]);
 
   const loadDashboard = async () => {
     try {
-      const [media, downloadStats] = await Promise.all([
-        api.getRecentlyAdded(100),
+      const [hubData, downloadStats] = await Promise.all([
+        api.getHubs(12),
         api.getDownloadStats().catch(() => null),
       ]);
-      setRecentlyAdded(media);
+      setHubs(hubData);
       setStats(downloadStats);
     } catch (error) {
       console.error('Failed to load dashboard', error);
@@ -51,58 +49,51 @@ export const Dashboard: React.FC = () => {
 
   return (
     <div className="min-h-screen flex flex-col">
+      <WelcomeModal />
       <Header onMenuClick={toggleMobileMenu} />
       <div className="flex flex-1 overflow-hidden">
         <Sidebar isOpen={isMobileMenuOpen} onClose={closeMobileMenu} />
         <main className="flex-1 p-4 md:p-8 overflow-y-auto">
-          <div className="max-w-7xl mx-auto">
+          <div className="max-w-[1800px] mx-auto">
             <h2 className="text-2xl md:text-3xl font-bold mb-4 md:mb-6">Home</h2>
 
-            {user?.isAdmin && (
-              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 md:gap-6 mb-6 md:mb-8">
-                <div className="card p-4 md:p-6">
-                  <div className="text-3xl md:text-4xl mb-3 md:mb-4">🎬</div>
-                  <h3 className="text-lg md:text-xl font-semibold mb-2">Browse Libraries</h3>
-                  <p className="text-gray-400 text-xs md:text-sm">
-                    Access all your Plex libraries with full metadata and artwork
-                  </p>
-                </div>
-
-                <div className="card p-4 md:p-6 cursor-pointer hover:border-primary-500 transition-colors" onClick={() => navigate('/admin/download-history')}>
-                  <div className="text-3xl md:text-4xl mb-3 md:mb-4">📊</div>
-                  <h3 className="text-lg md:text-xl font-semibold mb-2">Downloads</h3>
-                  {stats ? (
-                    <div className="text-xs md:text-sm space-y-1">
-                      <p className="text-gray-400">Total: {stats.count || 0}</p>
-                      <p className="text-gray-400">Size: {formatBytes(stats.total_size)}</p>
-                      <p className="text-primary-400 text-xs mt-2">Click to view history →</p>
-                    </div>
-                  ) : (
-                    <p className="text-gray-400 text-xs md:text-sm">Track your download history and stats</p>
-                  )}
-                </div>
-
-                <div className="card p-4 md:p-6 cursor-pointer hover:border-primary-500 transition-colors sm:col-span-2 md:col-span-1" onClick={() => navigate('/settings')}>
-                  <div className="text-3xl md:text-4xl mb-3 md:mb-4">⚙️</div>
-                  <h3 className="text-lg md:text-xl font-semibold mb-2">Settings</h3>
-                  <p className="text-gray-400 text-xs md:text-sm">
-                    Configure your Plex server connection
-                  </p>
-                </div>
+            {user?.isAdmin && stats && (
+              <div className="flex flex-wrap gap-2 mb-6">
+                <button
+                  onClick={() => navigate('/admin/download-history')}
+                  className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-dark-200 hover:bg-dark-300 text-sm text-gray-300 hover:text-white transition-colors cursor-pointer"
+                >
+                  <span>Downloads: {stats.count || 0} ({formatBytes(stats.total_size)})</span>
+                </button>
+                <button
+                  onClick={() => navigate('/settings')}
+                  className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-dark-200 hover:bg-dark-300 text-sm text-gray-300 hover:text-white transition-colors cursor-pointer"
+                >
+                  <span>Settings</span>
+                </button>
               </div>
             )}
 
             {isLoading ? (
-              <div className="text-center text-gray-400 py-12">Loading...</div>
-            ) : recentlyAdded.length > 0 ? (
               <div>
-                <h3 className="text-xl md:text-2xl font-bold mb-3 md:mb-4">Recently Added</h3>
-                <MediaGrid media={recentlyAdded} />
+                {Array.from({ length: 4 }).map((_, i) => (
+                  <HubRow key={i} title="" items={[]} isLoading />
+                ))}
+              </div>
+            ) : hubs.length > 0 ? (
+              <div>
+                {hubs.map((hub) => (
+                  <HubRow
+                    key={hub.hubIdentifier}
+                    title={hub.title}
+                    items={hub.items}
+                  />
+                ))}
               </div>
             ) : (
               <div className="card p-6 md:p-8 text-center">
                 <p className="text-gray-400 text-sm md:text-base">
-                  No recently added media found. Make sure your Plex server is configured in Settings.
+                  No content found. Make sure your Plex server is configured in Settings.
                 </p>
               </div>
             )}

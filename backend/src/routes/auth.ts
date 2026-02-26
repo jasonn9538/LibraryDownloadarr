@@ -10,6 +10,13 @@ import net from 'net';
 const MAX_FAILED_ATTEMPTS = 5;
 const LOCKOUT_DURATION_MS = 15 * 60 * 1000; // 15 minutes
 
+// Escalating IP ban thresholds (checked on every failed attempt)
+const BAN_THRESHOLD_1H = 15;   // 15 total failed attempts → 1 hour ban
+const BAN_DURATION_1H = 60 * 60 * 1000;
+const BAN_THRESHOLD_24H = 30;  // 30 total failed attempts → 24 hour ban
+const BAN_DURATION_24H = 24 * 60 * 60 * 1000;
+const BAN_THRESHOLD_PERMANENT = 50; // 50 total failed attempts → permanent ban
+
 // Admin login can be disabled via environment variable for better security
 // When disabled, only Plex OAuth is available
 const ADMIN_LOGIN_ENABLED = process.env.ADMIN_LOGIN_ENABLED !== 'false';
@@ -161,6 +168,20 @@ export const createAuthRouter = (db: DatabaseService) => {
     }
   });
 
+  // Helper: check for escalating bans after a failed login attempt
+  const checkEscalatingBan = (ip: string, attemptCount: number): void => {
+    if (attemptCount >= BAN_THRESHOLD_PERMANENT) {
+      db.banIp(ip, `Permanent ban: ${attemptCount} failed login attempts`);
+      db.logAuditEvent('IP_BANNED', undefined, undefined, ip, { attempts: attemptCount, duration: 'permanent' });
+    } else if (attemptCount >= BAN_THRESHOLD_24H) {
+      db.banIp(ip, `24h ban: ${attemptCount} failed login attempts`, BAN_DURATION_24H);
+      db.logAuditEvent('IP_BANNED', undefined, undefined, ip, { attempts: attemptCount, duration: '24h' });
+    } else if (attemptCount >= BAN_THRESHOLD_1H) {
+      db.banIp(ip, `1h ban: ${attemptCount} failed login attempts`, BAN_DURATION_1H);
+      db.logAuditEvent('IP_BANNED', undefined, undefined, ip, { attempts: attemptCount, duration: '1h' });
+    }
+  };
+
   // Admin login — only available from local network
   router.post('/login', async (req, res) => {
     try {
@@ -178,7 +199,24 @@ export const createAuthRouter = (db: DatabaseService) => {
 
       const ip = getClientIp(req);
 
-      // Check if IP is blocked (using database for persistence)
+      // Check for IP ban first (escalating brute force protection)
+      const banStatus = db.isIpBanned(ip);
+      if (banStatus.banned) {
+        logger.warn('Login attempt from banned IP', { ip, reason: banStatus.reason, permanent: banStatus.permanent });
+        if (banStatus.permanent) {
+          return res.status(403).json({
+            error: 'This IP address has been permanently banned due to excessive failed login attempts. Contact the administrator.'
+          });
+        }
+        const hoursRemaining = Math.ceil((banStatus.remainingMs || 0) / 3600000);
+        const minutesRemaining = Math.ceil((banStatus.remainingMs || 0) / 60000);
+        const timeMsg = hoursRemaining > 1 ? `${hoursRemaining} hours` : `${minutesRemaining} minutes`;
+        return res.status(403).json({
+          error: `This IP address has been temporarily banned. Try again in ${timeMsg}.`
+        });
+      }
+
+      // Check if IP is blocked (short-term brute force lockout)
       const blockStatus = db.isIpBlocked(ip);
       if (blockStatus.blocked) {
         const minutesRemaining = Math.ceil((blockStatus.remainingMs || 0) / 60000);
@@ -198,8 +236,10 @@ export const createAuthRouter = (db: DatabaseService) => {
       if (!user) {
         const result = db.recordFailedAttempt(ip, MAX_FAILED_ATTEMPTS, LOCKOUT_DURATION_MS);
         logger.warn('Failed login attempt - user not found', { ip, username });
-        // Log to audit trail
         db.logAuditEvent('LOGIN_FAILED', undefined, username, ip, { reason: 'user_not_found' });
+        // Check for escalating ban
+        const attempts = db.getFailedAttempts(ip);
+        if (attempts) checkEscalatingBan(ip, attempts.count);
         if (result.blocked) {
           return res.status(429).json({
             error: 'Too many failed login attempts. Try again in 15 minutes.'
@@ -212,8 +252,10 @@ export const createAuthRouter = (db: DatabaseService) => {
       if (!isValid) {
         const result = db.recordFailedAttempt(ip, MAX_FAILED_ATTEMPTS, LOCKOUT_DURATION_MS);
         logger.warn('Failed login attempt - wrong password', { ip, username });
-        // Log to audit trail
         db.logAuditEvent('LOGIN_FAILED', user.id, username, ip, { reason: 'invalid_password' });
+        // Check for escalating ban
+        const attempts = db.getFailedAttempts(ip);
+        if (attempts) checkEscalatingBan(ip, attempts.count);
         if (result.blocked) {
           return res.status(429).json({
             error: 'Too many failed login attempts. Try again in 15 minutes.'

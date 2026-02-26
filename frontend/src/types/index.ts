@@ -37,6 +37,8 @@ export interface MediaItem {
   parentTitle?: string; // Season name for episodes, Album for tracks
   index?: number; // Episode number or Track number
   parentIndex?: number; // Season number
+  parentRatingKey?: string; // Parent ratingKey (show for season, season for episode)
+  grandparentRatingKey?: string; // Grandparent ratingKey (show for episode)
   Media?: MediaPart[];
 }
 
@@ -61,6 +63,14 @@ export interface Part {
   file: string;
   size: number;
   container: string;
+}
+
+export interface Hub {
+  title: string;
+  hubIdentifier: string;
+  type: string;
+  items: MediaItem[];
+  more: boolean;
 }
 
 export interface PlexPin {

@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import crypto from 'crypto';
 import { DatabaseService } from '../models/database';
 import { plexService, getAvailableResolutions } from '../services/plexService';
 import { transcodeManager } from '../services/transcodeManager';
@@ -8,6 +9,43 @@ import axios from 'axios';
 import https from 'https';
 import path from 'path';
 import { createZipStream, ZipFileEntry } from '../utils/zipUtils';
+
+// In-memory cache for hub responses (avoids hammering Plex's slow /hubs endpoint)
+interface CacheEntry {
+  data: any;
+  expiresAt: number;
+}
+const hubCache = new Map<string, CacheEntry>();
+const HUB_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+const MAX_HUBS = 10; // Cap the number of hub rows returned
+
+function getHubCacheKey(token: string): string {
+  // Hash the token so we don't store raw tokens in memory
+  return crypto.createHash('sha256').update(token).digest('hex').slice(0, 16);
+}
+
+function getCachedHubs(token: string): any | null {
+  const key = getHubCacheKey(token);
+  const entry = hubCache.get(key);
+  if (!entry) return null;
+  if (Date.now() > entry.expiresAt) {
+    hubCache.delete(key);
+    return null;
+  }
+  return entry.data;
+}
+
+function setCachedHubs(token: string, data: any): void {
+  const key = getHubCacheKey(token);
+  hubCache.set(key, { data, expiresAt: Date.now() + HUB_CACHE_TTL_MS });
+  // Evict stale entries periodically (keep cache from growing unbounded)
+  if (hubCache.size > 200) {
+    const now = Date.now();
+    for (const [k, v] of hubCache) {
+      if (now > v.expiresAt) hubCache.delete(k);
+    }
+  }
+}
 
 // HTTPS agent that bypasses SSL certificate validation for local Plex servers
 // This is necessary when connecting to Plex servers with self-signed certificates
@@ -274,6 +312,111 @@ export const createMediaRouter = (db: DatabaseService) => {
         error: 'Search failed',
         details: error.message
       });
+    }
+  });
+
+  // Get personalized hub rows (Plex-style home page)
+  router.get('/hubs', authMiddleware, async (req: AuthRequest, res) => {
+    try {
+      const count = req.query.count ? parseInt(req.query.count as string) : 12;
+      const { token, serverUrl, error } = getUserCredentials(req);
+
+      if (error) {
+        return res.status(403).json({ error });
+      }
+
+      if (!token || !serverUrl) {
+        return res.status(500).json({ error: 'Plex server not configured' });
+      }
+
+      // Check cache first (avoids repeated slow Plex /hubs calls)
+      const cached = getCachedHubs(token);
+      if (cached) {
+        return res.json(cached);
+      }
+
+      plexService.setServerConnection(serverUrl, token);
+
+      let hubs: Array<{ title: string; hubIdentifier: string; type: string; items: any[]; more: boolean }> = [];
+
+      try {
+        // Try the Plex /hubs endpoint first (returns personalized rows)
+        const plexHubs = await plexService.getHubs(token, count);
+
+        if (plexHubs.length > 0) {
+          hubs = plexHubs.map(hub => ({
+            title: hub.title,
+            hubIdentifier: hub.hubIdentifier,
+            type: hub.type,
+            items: hub.Metadata,
+            more: hub.more,
+          }));
+        }
+      } catch (hubError: any) {
+        logger.warn('Plex /hubs endpoint failed, falling back to manual assembly', {
+          error: hubError.message,
+        });
+      }
+
+      // Fallback: manually assemble hubs if /hubs failed or returned empty
+      if (hubs.length === 0) {
+        try {
+          const onDeck = await plexService.getOnDeck(token, count);
+          if (onDeck.length > 0) {
+            hubs.push({
+              title: 'Continue Watching',
+              hubIdentifier: 'home.continue',
+              type: 'mixed',
+              items: onDeck,
+              more: false,
+            });
+          }
+        } catch (onDeckError: any) {
+          logger.warn('Failed to get on deck for fallback hubs', { error: onDeckError.message });
+        }
+
+        try {
+          const libraries = await plexService.getLibraries(token);
+          // Fetch all libraries in PARALLEL instead of sequentially
+          const libraryResults = await Promise.allSettled(
+            libraries.map(async (library) => {
+              const { items } = await plexService.getLibraryContent(library.key, token, {
+                offset: 0,
+                limit: count,
+                sort: 'addedAt',
+                order: 'desc',
+              });
+              return { library, items };
+            })
+          );
+
+          for (const result of libraryResults) {
+            if (result.status === 'fulfilled' && result.value.items.length > 0) {
+              const { library, items } = result.value;
+              hubs.push({
+                title: `Recently Added in ${library.title}`,
+                hubIdentifier: `hub.${library.type}.recentlyadded.${library.key}`,
+                type: library.type,
+                items,
+                more: true,
+              });
+            }
+          }
+        } catch (libsError: any) {
+          logger.warn('Failed to get libraries for fallback hubs', { error: libsError.message });
+        }
+      }
+
+      // Cap the number of hubs to avoid massive responses
+      const cappedHubs = hubs.slice(0, MAX_HUBS);
+
+      const responseData = { hubs: cappedHubs };
+      setCachedHubs(token, responseData);
+
+      return res.json(responseData);
+    } catch (error) {
+      logger.error('Failed to get hubs', { error });
+      return res.status(500).json({ error: 'Failed to get hubs' });
     }
   });
 
@@ -1003,6 +1146,8 @@ export const createMediaRouter = (db: DatabaseService) => {
       if (response.headers['content-length']) {
         res.setHeader('Content-Length', response.headers['content-length']);
       }
+      // Cache thumbnails aggressively — posters rarely change
+      res.setHeader('Cache-Control', 'public, max-age=86400, immutable');
 
       response.data.pipe(res);
       return;

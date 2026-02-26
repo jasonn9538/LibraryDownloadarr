@@ -1,4 +1,4 @@
-import { spawn, ChildProcess } from 'child_process';
+import { spawn, ChildProcess, execSync } from 'child_process';
 import { Response } from 'express';
 import fs from 'fs';
 import path from 'path';
@@ -46,6 +46,43 @@ function isPathWithinMappings(localPath: string, pathMappings: Array<{ plexPath:
   }
 
   return false;
+}
+
+// Text-based subtitle codecs that can be converted to mov_text (MP4 text subtitles)
+const TEXT_SUBTITLE_CODECS = new Set([
+  'subrip', 'srt', 'ass', 'ssa', 'webvtt', 'mov_text', 'text', 'ttml',
+]);
+
+/**
+ * Probe input file with ffprobe to find text-based subtitle stream indices.
+ * Bitmap subtitles (PGS, VOBSUB, DVB) cannot be converted to mov_text so they are skipped.
+ * Returns absolute stream indices suitable for -map 0:{index}.
+ */
+function getTextSubtitleStreams(inputPath: string): number[] {
+  try {
+    const result = execSync(
+      `ffprobe -v quiet -print_format json -show_streams -select_streams s "${inputPath.replace(/"/g, '\\"')}"`,
+      { timeout: 30000 }
+    ).toString();
+    const parsed = JSON.parse(result);
+    const indices: number[] = [];
+    if (parsed.streams) {
+      for (const stream of parsed.streams) {
+        if (TEXT_SUBTITLE_CODECS.has(stream.codec_name)) {
+          indices.push(stream.index);
+        }
+      }
+    }
+    if (indices.length > 0) {
+      logger.info('Found text subtitle streams', { count: indices.length, indices });
+    }
+    return indices;
+  } catch (err) {
+    logger.warn('Failed to probe subtitle streams, skipping subtitles', {
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return [];
+  }
 }
 
 // HTTPS agent that bypasses SSL certificate validation for local Plex servers
@@ -239,7 +276,8 @@ class TranscodeManager {
     maxBitrate: number,
     mediaTitle: string,
     mediaType: string,
-    filename: string
+    filename: string,
+    episodeInfo?: { parentIndex?: number; index?: number; parentTitle?: string }
   ): TranscodeJob {
     if (!this.db) {
       throw new Error('Transcode manager not initialized');
@@ -263,6 +301,9 @@ class TranscodeManager {
       mediaTitle,
       mediaType,
       filename,
+      parentIndex: episodeInfo?.parentIndex,
+      index: episodeInfo?.index,
+      parentTitle: episodeInfo?.parentTitle,
     });
 
     logger.info('Transcode job queued', {
@@ -324,6 +365,23 @@ class TranscodeManager {
   getJobCounts(userId?: string): { pending: number; transcoding: number; completed: number; error: number } {
     if (!this.db) return { pending: 0, transcoding: 0, completed: 0, error: 0 };
     return this.db.getTranscodeJobCounts(userId);
+  }
+
+  /**
+   * Move a pending job up or down in the queue
+   */
+  moveJob(jobId: string, direction: 'up' | 'down'): boolean {
+    if (!this.db) return false;
+
+    const job = this.db.getTranscodeJob(jobId);
+    if (!job || job.status !== 'pending') return false;
+
+    const adjacent = this.db.getAdjacentPendingJob(jobId, direction);
+    if (!adjacent) return false;
+
+    this.db.swapQueuePosition(jobId, adjacent.id);
+    logger.info('Queue position swapped', { jobId, adjacentId: adjacent.id, direction });
+    return true;
   }
 
   /**
@@ -626,20 +684,33 @@ class TranscodeManager {
         localFileAccess: useLocalFile,
       });
 
+      // Probe for text-based subtitle streams (PGS/bitmap subs can't go into MP4)
+      const subtitleStreams = getTextSubtitleStreams(inputPath);
+
       // Build ffmpeg arguments based on encoder type
       let ffmpegArgs: string[];
 
+      // Subtitle mapping args: map each text subtitle stream by absolute index
+      const subtitleMapArgs: string[] = [];
+      for (const idx of subtitleStreams) {
+        subtitleMapArgs.push('-map', `0:${idx}`);
+      }
+      // If we mapped any subtitle streams, set codec to mov_text (MP4 text subs)
+      const subtitleCodecArgs = subtitleStreams.length > 0 ? ['-c:s', 'mov_text'] : [];
+
       if (hwEncoder === 'vaapi') {
-        // VAAPI hardware encoding (Intel/AMD)
-        // Use -init_hw_device for software decode + hardware encode workflow
-        // Note: Subtitles are not included because PGS/bitmap subtitles can't be converted to mov_text
+        // VAAPI full hardware decode + encode (Intel/AMD)
+        // -hwaccel vaapi offloads decoding to GPU; falls back to software if codec unsupported
+        // -hwaccel_output_format vaapi keeps decoded frames on GPU (no CPU round-trip)
         ffmpegArgs = [
-          '-init_hw_device', 'vaapi=va:/dev/dri/renderD128',
-          '-filter_hw_device', 'va',
+          '-hwaccel', 'vaapi',
+          '-hwaccel_device', '/dev/dri/renderD128',
+          '-hwaccel_output_format', 'vaapi',
           '-i', inputPath,
           '-map', '0:v:0',           // Map first video stream
           '-map', '0:a?',            // Map all audio streams (optional)
-          '-vf', `format=nv12,hwupload,scale_vaapi=w=-2:h=${job.resolutionHeight}`,
+          ...subtitleMapArgs,         // Map text subtitle streams
+          '-vf', `scale_vaapi=w=-2:h=${job.resolutionHeight}:format=nv12`,
           '-c:v', 'h264_vaapi',
           '-profile:v', '77',        // Main profile
           '-level', '40',            // Level 4.0
@@ -650,6 +721,7 @@ class TranscodeManager {
           '-b:a', '128k',
           '-ac', '2',
           '-ar', '48000',
+          ...subtitleCodecArgs,       // Set subtitle codec if subs present
           '-map_metadata', '0',      // Copy all metadata
           '-map_chapters', '0',      // Copy chapters
           '-movflags', '+faststart',
@@ -658,16 +730,18 @@ class TranscodeManager {
           outputPath
         ];
       } else if (hwEncoder === 'qsv') {
-        // Intel Quick Sync encoding
-        // Use -init_hw_device for software decode + hardware encode workflow
-        // Note: Subtitles are not included because PGS/bitmap subtitles can't be converted to mov_text
+        // Intel Quick Sync full hardware decode + encode
+        // -hwaccel qsv offloads decoding to GPU; falls back to software if codec unsupported
+        // -hwaccel_output_format qsv keeps decoded frames on GPU (no CPU round-trip)
         ffmpegArgs = [
-          '-init_hw_device', 'qsv=qsv:hw',
-          '-filter_hw_device', 'qsv',
+          '-hwaccel', 'qsv',
+          '-hwaccel_output_format', 'qsv',
+          '-extra_hw_frames', '64',
           '-i', inputPath,
           '-map', '0:v:0',           // Map first video stream
           '-map', '0:a?',            // Map all audio streams (optional)
-          '-vf', `format=nv12,hwupload=extra_hw_frames=64,scale_qsv=w=-2:h=${job.resolutionHeight}`,
+          ...subtitleMapArgs,         // Map text subtitle streams
+          '-vf', `scale_qsv=w=-2:h=${job.resolutionHeight}`,
           '-c:v', 'h264_qsv',
           '-profile:v', 'main',
           '-level', '40',
@@ -678,6 +752,7 @@ class TranscodeManager {
           '-b:a', '128k',
           '-ac', '2',
           '-ar', '48000',
+          ...subtitleCodecArgs,       // Set subtitle codec if subs present
           '-map_metadata', '0',      // Copy all metadata
           '-map_chapters', '0',      // Copy chapters
           '-movflags', '+faststart',
@@ -687,11 +762,11 @@ class TranscodeManager {
         ];
       } else {
         // Software encoding (libx264)
-        // Note: Subtitles are not included because PGS/bitmap subtitles can't be converted to mov_text
         ffmpegArgs = [
           '-i', inputPath,
           '-map', '0:v:0',           // Map first video stream
           '-map', '0:a?',            // Map all audio streams (optional)
+          ...subtitleMapArgs,         // Map text subtitle streams
           '-vf', `scale=-2:${job.resolutionHeight}`,
           '-c:v', 'libx264',
           '-preset', 'fast',
@@ -706,6 +781,7 @@ class TranscodeManager {
           '-b:a', '128k',
           '-ac', '2',
           '-ar', '48000',
+          ...subtitleCodecArgs,       // Set subtitle codec if subs present
           '-map_metadata', '0',      // Copy all metadata
           '-map_chapters', '0',      // Copy chapters
           '-threads', '0',

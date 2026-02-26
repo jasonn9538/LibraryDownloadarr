@@ -4,6 +4,7 @@ import {
   AuthResponse,
   Library,
   MediaItem,
+  Hub,
   PlexPin,
   Settings,
   WorkerInfo,
@@ -141,6 +142,13 @@ class ApiClient {
       params: { limit },
     });
     return response.data.media;
+  }
+
+  async getHubs(count: number = 12): Promise<Hub[]> {
+    const response = await this.client.get<{ hubs: Hub[] }>('/media/hubs', {
+      params: { count },
+    });
+    return response.data.hubs;
   }
 
   async searchMedia(query: string): Promise<MediaItem[]> {
@@ -344,6 +352,10 @@ class ApiClient {
     await this.client.delete(`/transcodes/${jobId}`);
   }
 
+  async moveTranscode(jobId: string, direction: 'up' | 'down'): Promise<void> {
+    await this.client.patch(`/transcodes/${jobId}/move`, { direction });
+  }
+
   getTranscodeJobDownloadUrl(jobId: string): string {
     return `/api/transcodes/${jobId}/download`;
   }
@@ -413,6 +425,9 @@ export interface TranscodeJob {
   workerId?: string;
   workerName?: string;
   username?: string;
+  parentIndex?: number;
+  index?: number;
+  parentTitle?: string;
 }
 
 export const api = new ApiClient();

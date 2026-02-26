@@ -3,9 +3,11 @@ import { Header } from '../components/Header';
 import { Sidebar } from '../components/Sidebar';
 import { useMobileMenu } from '../hooks/useMobileMenu';
 import { api, TranscodeJob } from '../services/api';
+import { useAuthStore } from '../stores/authStore';
 
 export const Transcodes: React.FC = () => {
   const { isMobileMenuOpen, toggleMobileMenu, closeMobileMenu } = useMobileMenu();
+  const { user } = useAuthStore();
   const [jobs, setJobs] = useState<TranscodeJob[]>([]);
   const [allJobs, setAllJobs] = useState<TranscodeJob[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -51,6 +53,15 @@ export const Transcodes: React.FC = () => {
       loadJobs();
     } catch (error) {
       console.error('Failed to retry transcode:', error);
+    }
+  };
+
+  const handleMove = async (jobId: string, direction: 'up' | 'down') => {
+    try {
+      await api.moveTranscode(jobId, direction);
+      loadJobs();
+    } catch (error) {
+      console.error('Failed to move transcode:', error);
     }
   };
 
@@ -135,7 +146,31 @@ export const Transcodes: React.FC = () => {
   // Get user's job IDs to identify their own jobs
   const userJobIds = new Set(jobs.map(j => j.id));
 
-  const renderJobCard = (job: TranscodeJob) => {
+  const formatEpisodeTitle = (job: TranscodeJob) => {
+    if (job.mediaType === 'episode' && (job.parentIndex != null || job.index != null)) {
+      // Split show name from the rest using first " - "
+      const dashIndex = job.mediaTitle.indexOf(' - ');
+      const showName = dashIndex >= 0 ? job.mediaTitle.substring(0, dashIndex) : job.mediaTitle;
+      const seasonLabel = job.parentIndex != null ? `Season ${job.parentIndex}` : '';
+      const episodeLabel = job.index != null ? `Episode ${job.index}` : '';
+      // Get just the episode title (last segment after the last " - ")
+      const lastDash = job.mediaTitle.lastIndexOf(' - ');
+      const episodeTitle = lastDash >= 0 && lastDash !== dashIndex
+        ? job.mediaTitle.substring(lastDash + 3)
+        : '';
+      const subtitle = [seasonLabel, episodeLabel, episodeTitle].filter(Boolean).join(' - ');
+
+      return (
+        <div className="min-w-0">
+          <h3 className="font-medium text-white truncate">{showName}</h3>
+          {subtitle && <p className="text-sm text-gray-400 truncate">{subtitle}</p>}
+        </div>
+      );
+    }
+    return <h3 className="font-medium text-white truncate">{job.mediaTitle}</h3>;
+  };
+
+  const renderJobCard = (job: TranscodeJob, index?: number, totalPending?: number) => {
     const isOwnJob = userJobIds.has(job.id);
 
     return (
@@ -147,7 +182,7 @@ export const Transcodes: React.FC = () => {
       >
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
-            <h3 className="font-medium text-white truncate">{job.mediaTitle}</h3>
+            {formatEpisodeTitle(job)}
             <span className="px-2 py-0.5 text-xs bg-dark-200 text-gray-300 rounded">
               {job.resolutionLabel}
             </span>
@@ -206,6 +241,26 @@ export const Transcodes: React.FC = () => {
               <span>⬇️</span>
               Download
             </button>
+          )}
+          {job.status === 'pending' && user?.isAdmin && index != null && totalPending != null && (
+            <div className="flex flex-col gap-1">
+              <button
+                onClick={() => handleMove(job.id, 'up')}
+                disabled={index === 0}
+                className="px-2 py-0.5 text-xs text-gray-400 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed"
+                title="Move up in queue"
+              >
+                ▲
+              </button>
+              <button
+                onClick={() => handleMove(job.id, 'down')}
+                disabled={index === totalPending - 1}
+                className="px-2 py-0.5 text-xs text-gray-400 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed"
+                title="Move down in queue"
+              >
+                ▼
+              </button>
+            </div>
           )}
           {(job.status === 'pending' || job.status === 'transcoding') && isOwnJob && (
             <button
@@ -326,7 +381,7 @@ export const Transcodes: React.FC = () => {
                     </button>
                     {!collapsedSections.pending && (
                       <div className="space-y-3">
-                        {pendingJobs.map(job => renderJobCard(job))}
+                        {pendingJobs.map((job, idx) => renderJobCard(job, idx, pendingJobs.length))}
                       </div>
                     )}
                   </section>

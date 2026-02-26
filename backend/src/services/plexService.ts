@@ -69,6 +69,7 @@ export interface PlexMedia {
   index?: number;
   parentIndex?: number;
   parentRatingKey?: string;
+  grandparentRatingKey?: string;
   allowSync?: boolean | number | string; // Download permission: false/0/'0' means download disabled
   Media?: Array<{
     id: number;
@@ -107,6 +108,15 @@ export interface PlexAuthResponse {
     title: string;
     thumb: string;
   };
+}
+
+export interface PlexHub {
+  title: string;
+  hubIdentifier: string;
+  type: string;
+  size: number;
+  more: boolean;
+  Metadata: PlexMedia[];
 }
 
 export class PlexService {
@@ -757,6 +767,58 @@ export class PlexService {
       logger.error('Failed to get recently added', {
         error: error.message,
         stack: error.stack
+      });
+      throw error;
+    }
+  }
+
+  async getHubs(userToken: string, count: number = 12): Promise<PlexHub[]> {
+    if (!this.plexUrl) {
+      throw new Error('Plex server not configured');
+    }
+
+    try {
+      const axiosConfig = this.getAxiosConfig({
+        'X-Plex-Token': userToken,
+        'Accept': 'application/json',
+      });
+      axiosConfig.params = { count };
+
+      const response = await axios.get(`${this.plexUrl}/hubs`, axiosConfig);
+
+      const hubs: PlexHub[] = response.data?.MediaContainer?.Hub || [];
+      return hubs.filter(hub => hub.Metadata && hub.Metadata.length > 0);
+    } catch (error: any) {
+      logger.error('Failed to get hubs', {
+        error: error.message,
+        stack: error.stack,
+      });
+      throw error;
+    }
+  }
+
+  async getOnDeck(userToken: string, limit: number = 12): Promise<PlexMedia[]> {
+    if (!this.plexUrl) {
+      throw new Error('Plex server not configured');
+    }
+
+    try {
+      const axiosConfig = this.getAxiosConfig({
+        'X-Plex-Token': userToken,
+        'Accept': 'application/json',
+      });
+      axiosConfig.params = {
+        'X-Plex-Container-Start': 0,
+        'X-Plex-Container-Size': limit,
+      };
+
+      const response = await axios.get(`${this.plexUrl}/library/onDeck`, axiosConfig);
+
+      return response.data?.MediaContainer?.Metadata || [];
+    } catch (error: any) {
+      logger.error('Failed to get on deck', {
+        error: error.message,
+        stack: error.stack,
       });
       throw error;
     }

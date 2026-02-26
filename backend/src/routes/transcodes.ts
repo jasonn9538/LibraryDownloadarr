@@ -191,8 +191,19 @@ export const createTranscodesRouter = (db: DatabaseService) => {
       // Format title
       let mediaTitle = metadata.title || 'Unknown';
       if (metadata.type === 'episode') {
-        mediaTitle = `${metadata.grandparentTitle || 'Unknown Show'} - ${metadata.title}`;
+        const showName = metadata.grandparentTitle || 'Unknown Show';
+        const seasonNum = metadata.parentIndex != null ? `Season ${metadata.parentIndex}` : '';
+        const episodeNum = metadata.index != null ? `Episode ${metadata.index}` : '';
+        const parts = [showName, seasonNum, episodeNum, metadata.title].filter(Boolean);
+        mediaTitle = parts.join(' - ');
       }
+
+      // Gather episode info if available
+      const episodeInfo = metadata.type === 'episode' ? {
+        parentIndex: metadata.parentIndex,
+        index: metadata.index,
+        parentTitle: metadata.parentTitle,
+      } : undefined;
 
       // Queue the transcode
       const job = transcodeManager.queueTranscode(
@@ -204,7 +215,8 @@ export const createTranscodesRouter = (db: DatabaseService) => {
         targetBitrate,
         mediaTitle,
         mediaType,
-        filename
+        filename,
+        episodeInfo
       );
 
       logger.info('Transcode queued via API', {
@@ -284,8 +296,18 @@ export const createTranscodesRouter = (db: DatabaseService) => {
 
           let mediaTitle = metadata.title || 'Unknown';
           if (metadata.type === 'episode') {
-            mediaTitle = `${metadata.grandparentTitle || 'Unknown Show'} - ${metadata.title}`;
+            const showName = metadata.grandparentTitle || 'Unknown Show';
+            const seasonNum = metadata.parentIndex != null ? `Season ${metadata.parentIndex}` : '';
+            const episodeNum = metadata.index != null ? `Episode ${metadata.index}` : '';
+            const parts = [showName, seasonNum, episodeNum, metadata.title].filter(Boolean);
+            mediaTitle = parts.join(' - ');
           }
+
+          const episodeInfo = metadata.type === 'episode' ? {
+            parentIndex: metadata.parentIndex,
+            index: metadata.index,
+            parentTitle: metadata.parentTitle,
+          } : undefined;
 
           const job = transcodeManager.queueTranscode(
             req.user!.id,
@@ -296,7 +318,8 @@ export const createTranscodesRouter = (db: DatabaseService) => {
             targetBitrate,
             mediaTitle,
             metadata.type || 'video',
-            filename
+            filename,
+            episodeInfo
           );
 
           results.push({ ratingKey, success: true, jobId: job.id });
@@ -318,6 +341,32 @@ export const createTranscodesRouter = (db: DatabaseService) => {
     } catch (error) {
       logger.error('Failed to queue batch transcode', { error });
       return res.status(500).json({ error: 'Failed to queue batch transcode' });
+    }
+  });
+
+  // Move a pending job up or down in the queue (admin only)
+  router.patch('/:jobId/move', authMiddleware, async (req: AuthRequest, res) => {
+    try {
+      if (!req.user?.isAdmin) {
+        return res.status(403).json({ error: 'Admin access required' });
+      }
+
+      const { jobId } = req.params;
+      const { direction } = req.body;
+
+      if (direction !== 'up' && direction !== 'down') {
+        return res.status(400).json({ error: 'direction must be "up" or "down"' });
+      }
+
+      const success = transcodeManager.moveJob(jobId, direction);
+      if (!success) {
+        return res.status(400).json({ error: 'Cannot move job (not pending or already at boundary)' });
+      }
+
+      return res.json({ success: true });
+    } catch (error) {
+      logger.error('Failed to move transcode job', { error });
+      return res.status(500).json({ error: 'Failed to move transcode job' });
     }
   });
 

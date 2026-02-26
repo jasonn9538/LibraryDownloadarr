@@ -22,9 +22,10 @@ const db = new DatabaseService(config.database.path);
 // Initialize transcode manager with database
 transcodeManager.initialize(db);
 
-// Cleanup expired sessions every hour
+// Cleanup expired sessions and bans every hour
 setInterval(() => {
   db.cleanupExpiredSessions();
+  db.cleanupExpiredBans();
 }, 60 * 60 * 1000);
 
 // Create Express app
@@ -63,6 +64,14 @@ if (config.cors.origin) {
 // Rate limiting - exempt worker routes from global rate limit
 const limiter = rateLimit(config.rateLimit);
 
+// Stricter rate limit for auth endpoints (login, plex pin/authenticate)
+const authLimiter = rateLimit({
+  ...config.authRateLimit,
+  message: { error: 'Too many authentication requests. Please try again later.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
 // Body parsing
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -77,6 +86,9 @@ app.use('/api/worker', createWorkerRouter(db));
 
 // Apply rate limiter to all OTHER /api/ routes
 app.use('/api/', limiter);
+
+// Apply stricter rate limit to auth routes (stacks with global limiter)
+app.use('/api/auth', authLimiter);
 
 // Routes
 app.use('/api/auth', createAuthRouter(db));

@@ -64,6 +64,10 @@ export interface TranscodeJob {
   expiresAt?: number;
   workerId?: string;
   assignedAt?: number;
+  queuePosition?: number;
+  parentIndex?: number;
+  index?: number;
+  parentTitle?: string;
   // Joined fields
   username?: string;
   workerName?: string;
@@ -242,6 +246,17 @@ export class DatabaseService {
       CREATE INDEX IF NOT EXISTS idx_audit_log_action ON audit_log(action);
     `);
 
+    // Banned IPs table (escalating brute force protection)
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS banned_ips (
+        ip TEXT PRIMARY KEY,
+        reason TEXT NOT NULL,
+        banned_at INTEGER NOT NULL,
+        expires_at INTEGER,
+        permanent INTEGER NOT NULL DEFAULT 0
+      )
+    `);
+
     // Workers table (distributed transcoding)
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS workers (
@@ -264,6 +279,29 @@ export class DatabaseService {
       logger.info('Adding worker_id and assigned_at columns to transcode_jobs table');
       this.db.exec('ALTER TABLE transcode_jobs ADD COLUMN worker_id TEXT');
       this.db.exec('ALTER TABLE transcode_jobs ADD COLUMN assigned_at INTEGER');
+    }
+
+    // Migration: Add queue_position column for queue reordering
+    const hasQueuePosition = this.db.prepare(`
+      SELECT COUNT(*) as count FROM pragma_table_info('transcode_jobs') WHERE name='queue_position'
+    `).get() as { count: number };
+
+    if (hasQueuePosition.count === 0) {
+      logger.info('Adding queue_position column to transcode_jobs table');
+      this.db.exec('ALTER TABLE transcode_jobs ADD COLUMN queue_position INTEGER');
+      this.db.exec('UPDATE transcode_jobs SET queue_position = created_at WHERE queue_position IS NULL');
+    }
+
+    // Migration: Add episode metadata columns
+    const hasParentIndex = this.db.prepare(`
+      SELECT COUNT(*) as count FROM pragma_table_info('transcode_jobs') WHERE name='parent_index'
+    `).get() as { count: number };
+
+    if (hasParentIndex.count === 0) {
+      logger.info('Adding episode metadata columns to transcode_jobs table');
+      this.db.exec('ALTER TABLE transcode_jobs ADD COLUMN parent_index INTEGER');
+      this.db.exec('ALTER TABLE transcode_jobs ADD COLUMN "index" INTEGER');
+      this.db.exec('ALTER TABLE transcode_jobs ADD COLUMN parent_title TEXT');
     }
 
     logger.info('Database tables initialized');
@@ -487,14 +525,16 @@ export class DatabaseService {
     const stmt = this.db.prepare(`
       INSERT INTO transcode_jobs (
         id, user_id, rating_key, resolution_id, resolution_label, resolution_height,
-        max_bitrate, media_title, media_type, filename, status, progress, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?)
+        max_bitrate, media_title, media_type, filename, status, progress, created_at,
+        queue_position, parent_index, "index", parent_title
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?, ?, ?, ?, ?)
     `);
 
     stmt.run(
       id, job.userId, job.ratingKey, job.resolutionId, job.resolutionLabel,
       job.resolutionHeight, job.maxBitrate, job.mediaTitle, job.mediaType,
-      job.filename, createdAt
+      job.filename, createdAt, createdAt,
+      job.parentIndex ?? null, job.index ?? null, job.parentTitle ?? null
     );
 
     return {
@@ -503,6 +543,7 @@ export class DatabaseService {
       status: 'pending',
       progress: 0,
       createdAt,
+      queuePosition: createdAt,
     };
   }
 
@@ -563,7 +604,16 @@ export class DatabaseService {
       LEFT JOIN workers w ON tj.worker_id = w.id
       WHERE (tj.user_id = ? OR COALESCE(au.username, pu.username) = ?)
         AND (tj.expires_at IS NULL OR tj.expires_at > ? OR tj.status NOT IN ('completed', 'error', 'cancelled'))
-      ORDER BY tj.created_at DESC
+      ORDER BY
+        CASE tj.status
+          WHEN 'transcoding' THEN 1
+          WHEN 'pending' THEN 2
+          WHEN 'completed' THEN 3
+          WHEN 'error' THEN 4
+          ELSE 5
+        END,
+        CASE WHEN tj.status = 'pending' THEN tj.queue_position END ASC,
+        tj.created_at DESC
     `);
     const rows = stmt.all(userId, username || '', Date.now()) as any[];
     return rows.map(row => this.mapTranscodeJob(row));
@@ -605,6 +655,7 @@ export class DatabaseService {
           WHEN 'pending' THEN 2
           WHEN 'completed' THEN 3
         END,
+        CASE WHEN tj.status = 'pending' THEN tj.queue_position END ASC,
         tj.created_at DESC
     `);
     const rows = stmt.all(Date.now()) as any[];
@@ -640,7 +691,7 @@ export class DatabaseService {
       LEFT JOIN plex_users pu ON tj.user_id = pu.id
       LEFT JOIN workers w ON tj.worker_id = w.id
       WHERE tj.status = 'pending' AND tj.worker_id IS NULL
-      ORDER BY tj.created_at ASC
+      ORDER BY tj.queue_position ASC
       LIMIT ?
     `);
     const rows = stmt.all(limit) as any[];
@@ -795,9 +846,61 @@ export class DatabaseService {
       expiresAt: row.expires_at,
       workerId: row.worker_id,
       assignedAt: row.assigned_at,
+      queuePosition: row.queue_position,
+      parentIndex: row.parent_index ?? undefined,
+      index: row.index ?? undefined,
+      parentTitle: row.parent_title ?? undefined,
       username: row.username,
       workerName: row.worker_name,
     };
+  }
+
+  // Queue reordering operations
+  getAdjacentPendingJob(jobId: string, direction: 'up' | 'down'): TranscodeJob | undefined {
+    const currentJob = this.getTranscodeJob(jobId);
+    if (!currentJob || currentJob.status !== 'pending') return undefined;
+
+    const queuePos = currentJob.queuePosition ?? currentJob.createdAt;
+
+    // 'up' = lower queue_position (processed sooner), 'down' = higher queue_position (processed later)
+    const stmt = direction === 'up'
+      ? this.db.prepare(`
+          SELECT tj.*, COALESCE(au.username, pu.username) as username, w.name as worker_name
+          FROM transcode_jobs tj
+          LEFT JOIN admin_users au ON tj.user_id = au.id
+          LEFT JOIN plex_users pu ON tj.user_id = pu.id
+          LEFT JOIN workers w ON tj.worker_id = w.id
+          WHERE tj.status = 'pending' AND tj.queue_position < ?
+          ORDER BY tj.queue_position DESC
+          LIMIT 1
+        `)
+      : this.db.prepare(`
+          SELECT tj.*, COALESCE(au.username, pu.username) as username, w.name as worker_name
+          FROM transcode_jobs tj
+          LEFT JOIN admin_users au ON tj.user_id = au.id
+          LEFT JOIN plex_users pu ON tj.user_id = pu.id
+          LEFT JOIN workers w ON tj.worker_id = w.id
+          WHERE tj.status = 'pending' AND tj.queue_position > ?
+          ORDER BY tj.queue_position ASC
+          LIMIT 1
+        `);
+
+    const row = stmt.get(queuePos) as any;
+    return row ? this.mapTranscodeJob(row) : undefined;
+  }
+
+  swapQueuePosition(jobId1: string, jobId2: string): void {
+    const swap = this.db.transaction(() => {
+      const job1 = this.db.prepare('SELECT queue_position FROM transcode_jobs WHERE id = ?').get(jobId1) as { queue_position: number } | undefined;
+      const job2 = this.db.prepare('SELECT queue_position FROM transcode_jobs WHERE id = ?').get(jobId2) as { queue_position: number } | undefined;
+
+      if (!job1 || !job2) return;
+
+      this.db.prepare('UPDATE transcode_jobs SET queue_position = ? WHERE id = ?').run(job2.queue_position, jobId1);
+      this.db.prepare('UPDATE transcode_jobs SET queue_position = ? WHERE id = ?').run(job1.queue_position, jobId2);
+    });
+
+    swap();
   }
 
   // Worker operations (distributed transcoding)
@@ -864,7 +967,7 @@ export class DatabaseService {
       WHERE id = (
         SELECT id FROM transcode_jobs
         WHERE status = 'pending' AND worker_id IS NULL
-        ORDER BY created_at ASC LIMIT 1
+        ORDER BY queue_position ASC LIMIT 1
       )
       RETURNING *
     `);
@@ -1122,6 +1225,68 @@ export class DatabaseService {
     const result = stmt.run(thirtyMinutesAgo, now);
     if (result.changes > 0) {
       logger.debug(`Cleaned up ${result.changes} old failed login attempts`);
+    }
+  }
+
+  // IP banning (escalating brute force protection)
+  banIp(ip: string, reason: string, durationMs?: number): void {
+    const now = Date.now();
+    const permanent = durationMs === undefined ? 1 : 0;
+    const expiresAt = durationMs ? now + durationMs : null;
+
+    const stmt = this.db.prepare(`
+      INSERT INTO banned_ips (ip, reason, banned_at, expires_at, permanent)
+      VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(ip) DO UPDATE SET reason = ?, banned_at = ?, expires_at = ?, permanent = ?
+    `);
+    stmt.run(ip, reason, now, expiresAt, permanent, reason, now, expiresAt, permanent);
+    logger.warn('IP banned', { ip, reason, permanent: !!permanent, durationMs });
+  }
+
+  isIpBanned(ip: string): { banned: boolean; reason?: string; remainingMs?: number; permanent?: boolean } {
+    const stmt = this.db.prepare('SELECT reason, banned_at, expires_at, permanent FROM banned_ips WHERE ip = ?');
+    const row = stmt.get(ip) as { reason: string; banned_at: number; expires_at: number | null; permanent: number } | undefined;
+    if (!row) return { banned: false };
+
+    if (row.permanent) {
+      return { banned: true, reason: row.reason, permanent: true };
+    }
+
+    if (row.expires_at) {
+      const now = Date.now();
+      if (now < row.expires_at) {
+        return { banned: true, reason: row.reason, remainingMs: row.expires_at - now };
+      }
+      // Ban expired, remove it
+      this.db.prepare('DELETE FROM banned_ips WHERE ip = ?').run(ip);
+      return { banned: false };
+    }
+
+    return { banned: false };
+  }
+
+  unbanIp(ip: string): boolean {
+    const result = this.db.prepare('DELETE FROM banned_ips WHERE ip = ?').run(ip);
+    return result.changes > 0;
+  }
+
+  getBannedIps(): Array<{ ip: string; reason: string; bannedAt: number; expiresAt: number | null; permanent: boolean }> {
+    const stmt = this.db.prepare('SELECT ip, reason, banned_at, expires_at, permanent FROM banned_ips ORDER BY banned_at DESC');
+    const rows = stmt.all() as Array<{ ip: string; reason: string; banned_at: number; expires_at: number | null; permanent: number }>;
+    return rows.map(r => ({
+      ip: r.ip,
+      reason: r.reason,
+      bannedAt: r.banned_at,
+      expiresAt: r.expires_at,
+      permanent: !!r.permanent,
+    }));
+  }
+
+  cleanupExpiredBans(): void {
+    const now = Date.now();
+    const result = this.db.prepare('DELETE FROM banned_ips WHERE permanent = 0 AND expires_at IS NOT NULL AND expires_at < ?').run(now);
+    if (result.changes > 0) {
+      logger.debug(`Cleaned up ${result.changes} expired IP bans`);
     }
   }
 

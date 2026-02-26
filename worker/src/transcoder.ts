@@ -1,5 +1,41 @@
-import { spawn, ChildProcess } from 'child_process';
+import { spawn, ChildProcess, execSync } from 'child_process';
 import { logger } from './logger';
+
+// Text-based subtitle codecs that can be converted to mov_text (MP4 text subtitles)
+const TEXT_SUBTITLE_CODECS = new Set([
+  'subrip', 'srt', 'ass', 'ssa', 'webvtt', 'mov_text', 'text', 'ttml',
+]);
+
+/**
+ * Probe input file with ffprobe to find text-based subtitle stream indices.
+ * Bitmap subtitles (PGS, VOBSUB, DVB) cannot be converted to mov_text so they are skipped.
+ */
+function getTextSubtitleStreams(inputPath: string): number[] {
+  try {
+    const result = execSync(
+      `ffprobe -v quiet -print_format json -show_streams -select_streams s "${inputPath.replace(/"/g, '\\"')}"`,
+      { timeout: 30000 }
+    ).toString();
+    const parsed = JSON.parse(result);
+    const indices: number[] = [];
+    if (parsed.streams) {
+      for (const stream of parsed.streams) {
+        if (TEXT_SUBTITLE_CODECS.has(stream.codec_name)) {
+          indices.push(stream.index);
+        }
+      }
+    }
+    if (indices.length > 0) {
+      logger.info('Found text subtitle streams', { count: indices.length, indices });
+    }
+    return indices;
+  } catch (err) {
+    logger.warn('Failed to probe subtitle streams, skipping subtitles', {
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return [];
+  }
+}
 
 export interface TranscodeOptions {
   inputPath: string;
@@ -21,7 +57,9 @@ export function transcode(
 ): { process: ChildProcess; promise: Promise<TranscodeResult> } {
   const { inputPath, outputPath, encoder, resolutionHeight, maxBitrate } = options;
 
-  const ffmpegArgs = buildFfmpegArgs(encoder, inputPath, outputPath, resolutionHeight, maxBitrate);
+  // Probe for text subtitle streams before building ffmpeg args
+  const subtitleStreams = getTextSubtitleStreams(inputPath);
+  const ffmpegArgs = buildFfmpegArgs(encoder, inputPath, outputPath, resolutionHeight, maxBitrate, subtitleStreams);
 
   logger.info('Starting ffmpeg', { encoder, resolution: resolutionHeight, bitrate: maxBitrate });
 
@@ -77,12 +115,21 @@ function buildFfmpegArgs(
   outputPath: string,
   height: number,
   bitrate: number,
+  subtitleStreams: number[] = [],
 ): string[] {
-  const commonAudioArgs = [
+  // Subtitle mapping: map each text subtitle stream by absolute index
+  const subtitleMapArgs: string[] = [];
+  for (const idx of subtitleStreams) {
+    subtitleMapArgs.push('-map', `0:${idx}`);
+  }
+  const subtitleCodecArgs = subtitleStreams.length > 0 ? ['-c:s', 'mov_text'] : [];
+
+  const commonTailArgs = [
     '-c:a', 'aac',
     '-b:a', '128k',
     '-ac', '2',
     '-ar', '48000',
+    ...subtitleCodecArgs,
     '-movflags', '+faststart',
     '-f', 'mp4',
     '-y',
@@ -96,6 +143,7 @@ function buildFfmpegArgs(
       '-i', inputPath,
       '-map', '0:v:0',
       '-map', '0:a?',
+      ...subtitleMapArgs,
       '-vf', `scale_cuda=-2:${height}`,
       '-c:v', 'h264_nvenc',
       '-preset', 'p4',
@@ -105,7 +153,7 @@ function buildFfmpegArgs(
       '-b:v', `${bitrate}k`,
       '-maxrate', `${bitrate}k`,
       '-bufsize', `${bitrate * 2}k`,
-      ...commonAudioArgs,
+      ...commonTailArgs,
     ];
   }
 
@@ -116,6 +164,7 @@ function buildFfmpegArgs(
       '-i', inputPath,
       '-map', '0:v:0',
       '-map', '0:a?',
+      ...subtitleMapArgs,
       '-vf', `format=nv12,hwupload,scale_vaapi=w=-2:h=${height}`,
       '-c:v', 'h264_vaapi',
       '-profile:v', '77',
@@ -123,7 +172,7 @@ function buildFfmpegArgs(
       '-b:v', `${bitrate}k`,
       '-maxrate', `${bitrate}k`,
       '-bufsize', `${bitrate * 2}k`,
-      ...commonAudioArgs,
+      ...commonTailArgs,
     ];
   }
 
@@ -134,6 +183,7 @@ function buildFfmpegArgs(
       '-i', inputPath,
       '-map', '0:v:0',
       '-map', '0:a?',
+      ...subtitleMapArgs,
       '-vf', `format=nv12,hwupload=extra_hw_frames=64,scale_qsv=w=-2:h=${height}`,
       '-c:v', 'h264_qsv',
       '-profile:v', 'main',
@@ -141,7 +191,7 @@ function buildFfmpegArgs(
       '-b:v', `${bitrate}k`,
       '-maxrate', `${bitrate}k`,
       '-bufsize', `${bitrate * 2}k`,
-      ...commonAudioArgs,
+      ...commonTailArgs,
     ];
   }
 
@@ -150,6 +200,7 @@ function buildFfmpegArgs(
     '-i', inputPath,
     '-map', '0:v:0',
     '-map', '0:a?',
+    ...subtitleMapArgs,
     '-vf', `scale=-2:${height}`,
     '-c:v', 'libx264',
     '-preset', 'fast',
@@ -160,6 +211,6 @@ function buildFfmpegArgs(
     '-crf', '23',
     '-maxrate', `${bitrate}k`,
     '-bufsize', `${bitrate * 2}k`,
-    ...commonAudioArgs,
+    ...commonTailArgs,
   ];
 }
