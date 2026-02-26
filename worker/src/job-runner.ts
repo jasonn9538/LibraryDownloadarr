@@ -4,7 +4,7 @@ import { ChildProcess } from 'child_process';
 import { config } from './config';
 import { logger } from './logger';
 import { ApiClient, ClaimedJob } from './api-client';
-import { transcode } from './transcoder';
+import { transcode, validateTranscodeOutput } from './transcoder';
 import { GpuCapabilities } from './gpu-detector';
 
 export class JobRunner {
@@ -146,7 +146,13 @@ export class JobRunner {
         throw new Error(result.error || 'Transcode failed');
       }
 
-      // Step 4: Upload completed file
+      // Step 4: Validate output before uploading
+      const validationError = validateTranscodeOutput(outputPath, durationSeconds);
+      if (validationError) {
+        throw new Error(`Validation failed: ${validationError}`);
+      }
+
+      // Step 5: Upload completed file
       logger.info('Uploading completed transcode', { jobId: job.id });
 
       let uploaded = false;

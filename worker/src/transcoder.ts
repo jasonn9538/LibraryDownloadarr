@@ -1,4 +1,5 @@
 import { spawn, ChildProcess, execSync } from 'child_process';
+import fs from 'fs';
 import { logger } from './logger';
 
 // Text-based subtitle codecs that can be converted to mov_text (MP4 text subtitles)
@@ -34,6 +35,60 @@ function getTextSubtitleStreams(inputPath: string): number[] {
       error: err instanceof Error ? err.message : String(err),
     });
     return [];
+  }
+}
+
+/**
+ * Validate a transcoded output file using ffprobe.
+ * Checks for: video stream, audio stream, reasonable duration, and minimum file size.
+ * Returns null if valid, or an error string describing the problem.
+ */
+export function validateTranscodeOutput(outputPath: string, expectedDurationSeconds: number): string | null {
+  const MIN_FILE_SIZE = 10 * 1024; // 10 KB
+
+  try {
+    const stats = fs.statSync(outputPath);
+    if (stats.size < MIN_FILE_SIZE) {
+      return `Output file too small (${stats.size} bytes). Transcode likely failed.`;
+    }
+  } catch {
+    return 'Output file does not exist';
+  }
+
+  try {
+    const result = execSync(
+      `ffprobe -v quiet -print_format json -show_streams -show_format "${outputPath.replace(/"/g, '\\"')}"`,
+      { timeout: 30000 }
+    ).toString();
+    const parsed = JSON.parse(result);
+
+    const videoStreams = (parsed.streams || []).filter((s: any) => s.codec_type === 'video');
+    if (videoStreams.length === 0) {
+      return 'Output has no video stream';
+    }
+
+    const audioStreams = (parsed.streams || []).filter((s: any) => s.codec_type === 'audio');
+    if (audioStreams.length === 0) {
+      return 'Output has no audio stream. The source file may have an unsupported audio format.';
+    }
+
+    if (expectedDurationSeconds > 0 && parsed.format?.duration) {
+      const outputDuration = parseFloat(parsed.format.duration);
+      const minExpected = expectedDurationSeconds * 0.9;
+
+      if (outputDuration < minExpected) {
+        const expectedMin = Math.round(expectedDurationSeconds / 60);
+        const actualMin = Math.round(outputDuration / 60);
+        return `Output is truncated: ${actualMin}m vs expected ${expectedMin}m. Video may have cut out early.`;
+      }
+    }
+
+    return null;
+  } catch (err) {
+    logger.warn('ffprobe validation failed, allowing file through', {
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return null;
   }
 }
 

@@ -85,6 +85,66 @@ function getTextSubtitleStreams(inputPath: string): number[] {
   }
 }
 
+/**
+ * Validate a transcoded output file using ffprobe.
+ * Checks for: video stream, audio stream, reasonable duration, and minimum file size.
+ * Returns null if valid, or an error string describing the problem.
+ */
+export function validateTranscodeOutput(outputPath: string, expectedDurationSeconds: number): string | null {
+  const MIN_FILE_SIZE = 10 * 1024; // 10 KB — anything smaller is clearly broken
+
+  // Check file exists and has reasonable size
+  try {
+    const stats = fs.statSync(outputPath);
+    if (stats.size < MIN_FILE_SIZE) {
+      return `Output file too small (${stats.size} bytes). Transcode likely failed.`;
+    }
+  } catch {
+    return 'Output file does not exist';
+  }
+
+  // Probe the output with ffprobe
+  try {
+    const result = execSync(
+      `ffprobe -v quiet -print_format json -show_streams -show_format "${outputPath.replace(/"/g, '\\"')}"`,
+      { timeout: 30000 }
+    ).toString();
+    const parsed = JSON.parse(result);
+
+    // Check for video stream
+    const videoStreams = (parsed.streams || []).filter((s: any) => s.codec_type === 'video');
+    if (videoStreams.length === 0) {
+      return 'Output has no video stream';
+    }
+
+    // Check for audio stream
+    const audioStreams = (parsed.streams || []).filter((s: any) => s.codec_type === 'audio');
+    if (audioStreams.length === 0) {
+      return 'Output has no audio stream. The source file may have an unsupported audio format.';
+    }
+
+    // Check duration (allow 10% tolerance)
+    if (expectedDurationSeconds > 0 && parsed.format?.duration) {
+      const outputDuration = parseFloat(parsed.format.duration);
+      const minExpected = expectedDurationSeconds * 0.9;
+
+      if (outputDuration < minExpected) {
+        const expectedMin = Math.round(expectedDurationSeconds / 60);
+        const actualMin = Math.round(outputDuration / 60);
+        return `Output is truncated: ${actualMin}m vs expected ${expectedMin}m. Video may have cut out early.`;
+      }
+    }
+
+    return null; // Valid
+  } catch (err) {
+    logger.warn('ffprobe validation failed, allowing file through', {
+      error: err instanceof Error ? err.message : String(err),
+    });
+    // If ffprobe itself fails, don't block — the file might still be playable
+    return null;
+  }
+}
+
 // HTTPS agent that bypasses SSL certificate validation for local Plex servers
 const httpsAgent = new https.Agent({
   rejectUnauthorized: false
@@ -848,7 +908,7 @@ class TranscodeManager {
       ffmpeg.on('close', (code) => {
         cleanupTempFile();
         if (code === 0) {
-          this.handleTranscodeComplete(job.id, cacheKey, outputPath);
+          this.handleTranscodeComplete(job.id, cacheKey, outputPath, durationSeconds);
         } else {
           const currentJob = this.db?.getTranscodeJob(job.id);
           if (currentJob?.status !== 'cancelled') {
@@ -869,8 +929,16 @@ class TranscodeManager {
     }
   }
 
-  private handleTranscodeComplete(jobId: string, cacheKey: string, outputPath: string): void {
+  private handleTranscodeComplete(jobId: string, cacheKey: string, outputPath: string, durationSeconds: number = 0): void {
     if (!this.db) return;
+
+    // Validate the output file before marking as completed
+    const validationError = validateTranscodeOutput(outputPath, durationSeconds);
+    if (validationError) {
+      logger.error('Post-transcode validation failed', { jobId, cacheKey, error: validationError });
+      this.handleTranscodeError(jobId, cacheKey, `Validation failed: ${validationError}`);
+      return;
+    }
 
     // Get file size
     let fileSize: number | undefined;
@@ -892,7 +960,7 @@ class TranscodeManager {
     // Remove from active
     this.activeTranscodes.delete(cacheKey);
 
-    logger.info('Transcode completed', { jobId, cacheKey, fileSize });
+    logger.info('Transcode completed and validated', { jobId, cacheKey, fileSize });
 
     // Process next in queue
     this.processQueue();
