@@ -31,9 +31,11 @@ setInterval(() => {
 // Create Express app
 const app = express();
 
-// Trust the first proxy hop (reverse proxy like nginx/Caddy/Traefik)
-// This makes req.ip use X-Forwarded-For correctly for rate limiting and IP banning
-app.set('trust proxy', 1);
+// Trust X-Forwarded-For only from loopback (local nginx/Caddy proxy).
+// Using 'loopback' instead of 1 prevents remote clients from spoofing their IP
+// by injecting X-Forwarded-For headers, which would bypass brute-force protections
+// and the admin-login local-network restriction.
+app.set('trust proxy', 'loopback');
 
 // Security middleware
 app.use(helmet({

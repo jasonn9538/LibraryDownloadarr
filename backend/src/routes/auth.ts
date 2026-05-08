@@ -388,9 +388,14 @@ export const createAuthRouter = (db: DatabaseService) => {
         return res.status(400).json({ error: 'PIN ID is required' });
       }
 
-      logger.debug('Checking Plex PIN', { pinId });
+      const numericPinId = parseInt(pinId, 10);
+      if (isNaN(numericPinId) || numericPinId <= 0) {
+        return res.status(400).json({ error: 'Invalid PIN ID' });
+      }
 
-      const authResponse = await plexService.checkPin(pinId);
+      logger.debug('Checking Plex PIN', { pinId: numericPinId });
+
+      const authResponse = await plexService.checkPin(numericPinId);
       if (!authResponse) {
         return res.status(400).json({ error: 'PIN not yet authorized' });
       }

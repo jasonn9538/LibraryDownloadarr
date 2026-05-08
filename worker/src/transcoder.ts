@@ -1,4 +1,4 @@
-import { spawn, ChildProcess, execSync } from 'child_process';
+import { spawn, spawnSync, ChildProcess } from 'child_process';
 import fs from 'fs';
 import { logger } from './logger';
 
@@ -13,11 +13,14 @@ const TEXT_SUBTITLE_CODECS = new Set([
  */
 function getTextSubtitleStreams(inputPath: string): number[] {
   try {
-    const result = execSync(
-      `ffprobe -v quiet -print_format json -show_streams -select_streams s "${inputPath.replace(/"/g, '\\"')}"`,
-      { timeout: 30000 }
-    ).toString();
-    const parsed = JSON.parse(result);
+    const result = spawnSync('ffprobe', [
+      '-v', 'quiet',
+      '-print_format', 'json',
+      '-show_streams',
+      '-select_streams', 's',
+      inputPath,
+    ], { timeout: 30000 });
+    const parsed = JSON.parse(result.stdout.toString());
     const indices: number[] = [];
     if (parsed.streams) {
       for (const stream of parsed.streams) {
@@ -56,11 +59,14 @@ export function validateTranscodeOutput(outputPath: string, expectedDurationSeco
   }
 
   try {
-    const result = execSync(
-      `ffprobe -v quiet -print_format json -show_streams -show_format "${outputPath.replace(/"/g, '\\"')}"`,
-      { timeout: 30000 }
-    ).toString();
-    const parsed = JSON.parse(result);
+    const result = spawnSync('ffprobe', [
+      '-v', 'quiet',
+      '-print_format', 'json',
+      '-show_streams',
+      '-show_format',
+      outputPath,
+    ], { timeout: 30000 });
+    const parsed = JSON.parse(result.stdout.toString());
 
     const videoStreams = (parsed.streams || []).filter((s: any) => s.codec_type === 'video');
     if (videoStreams.length === 0) {
