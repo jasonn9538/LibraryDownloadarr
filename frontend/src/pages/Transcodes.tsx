@@ -66,18 +66,26 @@ export const Transcodes: React.FC = () => {
     }
   };
 
-  const handleDownload = (job: TranscodeJob) => {
-    // Use direct browser download with token in query string
+  const handleDownload = async (job: TranscodeJob) => {
     const token = localStorage.getItem('token');
     const url = `${api.getTranscodeJobDownloadUrl(job.id)}?token=${encodeURIComponent(token || '')}`;
 
-    // Create a temporary anchor tag to trigger the download
+    const res = await fetch(url);
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      alert(body.error || `Download failed (${res.status})`);
+      return;
+    }
+
+    const blob = await res.blob();
+    const blobUrl = URL.createObjectURL(blob);
     const link = document.createElement('a');
-    link.href = url;
+    link.href = blobUrl;
     link.download = job.filename || 'download.mp4';
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    URL.revokeObjectURL(blobUrl);
   };
 
   const formatFileSize = (bytes?: number): string => {

@@ -426,14 +426,8 @@ export const createTranscodesRouter = (db: DatabaseService) => {
         return res.status(400).json({ error: 'Job is not completed yet' });
       }
 
-      // Verify the user owns this job, is a requester, or is an admin
-      if (job.userId !== req.user!.id && !req.user?.isAdmin) {
-        // Check if they're a requester of this job
-        const userJobs = transcodeManager.getUserJobs(req.user!.id);
-        if (!userJobs.some(j => j.id === jobId)) {
-          return res.status(403).json({ error: 'Access denied' });
-        }
-      }
+      // Completed jobs are shareable — any authenticated user can download,
+      // consistent with the GET /:jobId view policy for completed jobs.
 
       // Log the download
       db.logDownload(
